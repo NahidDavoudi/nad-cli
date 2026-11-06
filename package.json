@@ -7,7 +7,9 @@
   "bin": {
     "nad": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
@@ -16,7 +18,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "commander": "^15.0.0"
+    "commander": "^15.0.0",
+    "execa": "^10.2.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
