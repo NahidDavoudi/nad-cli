@@ -1,0 +1,14 @@
+{
+  "name": "@nad/cli",
+  "version": "0.0.1",
+  "description": "Nad CLI",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "nad": "./bin/nad.js"
+  },
+  "files": ["bin"],
+  "engines": {
+    "node": ">=18"
+  }
+}
