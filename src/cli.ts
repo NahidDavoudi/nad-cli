@@ -18,9 +18,11 @@ program.addCommand(inspectCommand);
 
 // exitOverride is not inherited: apply to every command, and silence
 // commander's own output so handleError renders it consistently.
-for (const cmd of [program, ...program.commands]) {
-  cmd.exitOverride().configureOutput({ writeErr: () => {} });
-}
+const applyToAll = (cmd: Command): void => {
+  cmd.exitOverride().configureOutput({ outputError: () => {} });
+  cmd.commands.forEach(applyToAll);
+};
+applyToAll(program);
 program.showSuggestionAfterError();
 
 try {
