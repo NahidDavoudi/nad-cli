@@ -20,12 +20,30 @@ export interface Detection {
     nextStandalone: boolean | null;
     packageManager: 'npm' | 'pnpm' | 'yarn' | null;
     hasRequirements: boolean;
+    /** `ext-*` entries from composer.json `require` (without the `ext-` prefix). */
+    phpExtensions: string[];
+    /** Whether package.json defines these scripts (the Dockerfiles call them). */
+    scripts: { build: boolean; start: boolean };
   };
 }
 
 interface PackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
+}
+
+function readComposerExtensions(dir: string): string[] {
+  try {
+    const data = JSON.parse(readFileSync(join(dir, 'composer.json'), 'utf8')) as {
+      require?: Record<string, string>;
+    };
+    return Object.keys(data.require ?? {})
+      .filter((name) => name.startsWith('ext-'))
+      .map((name) => name.slice(4).toLowerCase());
+  } catch {
+    return [];
+  }
 }
 
 function readPackageJson(dir: string): PackageJson | null {
@@ -109,6 +127,8 @@ export function detectProject(dir: string): Detection {
       nextStandalone,
       packageManager,
       hasRequirements: Boolean(requirements),
+      phpExtensions: composer ? readComposerExtensions(dir) : [],
+      scripts: { build: Boolean(pkg?.scripts?.build), start: Boolean(pkg?.scripts?.start) },
     },
   };
 }

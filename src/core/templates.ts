@@ -26,6 +26,15 @@ const lines = (...parts: (string | false | undefined)[]): string =>
 export const slug = (name: string): string =>
   name.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'app';
 
+/** Extensions the generated PHP image has: the ones we install plus those built into php:*-apache. */
+export const PHP_PROVIDED_EXTENSIONS = new Set([
+  'gd', 'pdo_mysql', 'mysqli', 'zip', 'intl', 'opcache', 'bcmath',
+  'mbstring', 'json', 'curl', 'openssl', 'pdo', 'pdo_sqlite', 'sqlite3', 'ctype', 'dom',
+  'fileinfo', 'filter', 'hash', 'iconv', 'libxml', 'pcre', 'phar', 'posix', 'readline',
+  'reflection', 'session', 'simplexml', 'sodium', 'spl', 'standard', 'tokenizer', 'xml',
+  'xmlreader', 'xmlwriter', 'zlib', 'date', 'mysqlnd', 'random',
+]);
+
 // ---------------------------------------------------------------- Dockerfiles
 
 function phpDockerfile(c: TemplateContext): string {
