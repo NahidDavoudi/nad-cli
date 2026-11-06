@@ -78,7 +78,8 @@ function isCommanderError(error: unknown): error is { code: string; message: str
 
 export function handleError(error: unknown): never {
   if (isCommanderError(error)) {
-    if (error.exitCode === 0) process.exit(0);
+    // help/version were already printed by commander; nothing to add.
+    if (error.exitCode === 0 || error.code === 'commander.help') process.exit(error.exitCode);
     ui.error(error.message.replace(/^error: /, ''));
     ui.hint(`Run with ${ui.code('--help')} for usage.`);
     process.exit(error.exitCode);
