@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { hiCommand } from './commands/hi.js';
 
 const program = new Command();
 program.name('nad').description('NAD CLI').version('0.0.1');
 
-program.command('hi').argument('[name]', 'Name to greet').description('Say hi').action((name) => {
-  console.log(`Hello there, ${name ?? 'love'}!`);
-});
+program.addCommand(hiCommand);
 program.parse(process.argv);
