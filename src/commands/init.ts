@@ -1,8 +1,9 @@
 import { Command } from 'commander';
+import { execFileSync } from 'node:child_process';
 import { basename, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
-import { DEFAULT_PORTS, renderTemplate } from '../core/templates.js';
+import { renderTemplate, slug } from '../core/templates.js';
 import { applyFiles, planFiles, type OpAction } from '../core/scaffold.js';
 import { ui } from '../core/ui.js';
 
@@ -17,9 +18,21 @@ function isProjectType(value: string): value is ProjectType {
   return (PROJECT_TYPES as readonly string[]).includes(value);
 }
 
+/** `owner/repo` from `origin` (GHCR needs it lowercase), or null when unknown. */
+function githubRepo(dir: string): string | null {
+  try {
+    const url = execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: dir, encoding: 'utf8' });
+    const match = url.trim().match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/i);
+    if (match?.[1] && match[2]) return `${match[1]}/${match[2]}`.toLowerCase();
+  } catch {
+    // no git / no remote: fall through
+  }
+  return null;
+}
+
 interface InitOptions {
   template?: string;
-  port?: string;
+  name?: string;
   dryRun?: boolean;
   force?: boolean;
 }
@@ -27,7 +40,7 @@ interface InitOptions {
 export const initCommand = new Command('init')
   .description('Generate Dockerfile, compose file and nad.project.yml for this project')
   .option('-t, --template <type>', `Project type (${PROJECT_TYPES.join(' | ')}); auto-detected if omitted`)
-  .option('-p, --port <number>', 'Host port for the container (127.0.0.1 only)')
+  .option('-n, --name <name>', 'Container / image name (default: folder name)')
   .option('--dry-run', 'Show what would be written without writing anything')
   .option('--force', 'Overwrite files that differ (originals are backed up to .nad/backup/)')
   .action((options: InitOptions) => {
@@ -56,11 +69,6 @@ export const initCommand = new Command('init')
       );
     }
 
-    const port = options.port ? Number(options.port) : DEFAULT_PORTS[type];
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new NadError(`Invalid port '${options.port}'.`, 'Use a number between 1 and 65535.');
-    }
-
     if (type === 'next' && detection.facts.nextStandalone === false) {
       ui.warn(`next.config has no ${ui.code("output: 'standalone'")} — the generated Dockerfile needs it.`);
     }
@@ -68,7 +76,13 @@ export const initCommand = new Command('init')
       ui.warn(`Found a ${detection.facts.packageManager} lockfile; the template installs with npm.`);
     }
 
-    const files = renderTemplate({ name: basename(dir), type, port, facts: detection.facts });
+    const name = options.name ?? basename(dir);
+    const files = renderTemplate({
+      name,
+      type,
+      imageRepo: githubRepo(dir) ?? `nahiddavoudi/${slug(name)}`,
+      facts: detection.facts,
+    });
     const ops = planFiles(dir, files, Boolean(options.force));
 
     for (const op of ops) ui.plain(`  ${LABEL[op.action]}  ${op.path}`);
@@ -86,6 +100,7 @@ export const initCommand = new Command('init')
     } else {
       const backup = applyFiles(dir, ops);
       ui.success(`Wrote ${changes.length} file(s).`);
+      ui.hint(`First time on this machine: ${ui.code('docker network create proxy')}${type === 'php' ? ' && docker network create db_net' : ''}`);
       if (backup) ui.info(`Originals backed up to ${ui.code(backup)}`);
     }
 

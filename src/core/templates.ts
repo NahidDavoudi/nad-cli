@@ -3,26 +3,27 @@ import type { Detection, ProjectType } from './detect.js';
 export interface TemplateContext {
   name: string;
   type: ProjectType;
-  port: number;
+  /** `owner/repo` (lowercase) used for the GHCR image name. */
+  imageRepo: string;
   facts: Detection['facts'];
 }
 
 /** path (relative, forward slashes) -> file content */
 export type FileMap = Record<string, string>;
 
-/** Host port suggested per type, so several projects can live on one VPS. */
-export const DEFAULT_PORTS: Record<ProjectType, number> = {
-  php: 8080,
+/** Port the app listens on *inside* the container (Caddy proxies to it by name). */
+export const CONTAINER_PORT: Record<ProjectType, number> = {
+  php: 80,
   next: 3000,
-  node: 4000,
+  node: 3000,
   python: 8000,
-  static: 8081,
+  static: 80,
 };
 
 const lines = (...parts: (string | false | undefined)[]): string =>
   parts.filter((p): p is string => typeof p === 'string').join('\n') + '\n';
 
-const slug = (name: string): string =>
+export const slug = (name: string): string =>
   name.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'app';
 
 // ---------------------------------------------------------------- Dockerfiles
@@ -30,28 +31,38 @@ const slug = (name: string): string =>
 function phpDockerfile(c: TemplateContext): string {
   const docroot = c.facts.phpPublicDir ? '/var/www/html/public' : '/var/www/html';
   return lines(
+    '# syntax=docker/dockerfile:1',
+    '# Build context: the repository root',
+    '',
     c.facts.hasComposer && 'FROM composer:2 AS vendor',
     c.facts.hasComposer && 'WORKDIR /app',
     c.facts.hasComposer && 'COPY composer.json composer.lock* ./',
     c.facts.hasComposer &&
-      'RUN composer install --no-dev --no-scripts --no-interaction --prefer-dist --optimize-autoloader',
+      'RUN composer install --no-dev --no-interaction --no-scripts --prefer-dist --optimize-autoloader',
     c.facts.hasComposer && '',
-    'FROM php:8.3-apache',
+    'FROM php:8.4-apache AS runtime',
     'RUN apt-get update && apt-get install -y --no-install-recommends \\',
-    '      libpng-dev libjpeg-dev libwebp-dev libzip-dev libicu-dev \\',
-    ' && docker-php-ext-configure gd --with-jpeg --with-webp \\',
-    ' && docker-php-ext-install -j"$(nproc)" gd pdo_mysql zip intl opcache \\',
-    ' && a2enmod rewrite headers expires \\',
+    '    libpng-dev libjpeg-dev libwebp-dev libfreetype6-dev libzip-dev libicu-dev \\',
+    ' && docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype \\',
+    ' && docker-php-ext-install -j"$(nproc)" gd pdo_mysql mysqli zip intl opcache bcmath \\',
+    ' && a2enmod rewrite headers remoteip \\',
     ' && rm -rf /var/lib/apt/lists/*',
     '',
-    `ENV APACHE_DOCUMENT_ROOT=${docroot}`,
-    "RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' \\",
-    '      /etc/apache2/sites-available/*.conf /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf',
+    'RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"',
+    'COPY docker/custom.ini "$PHP_INI_DIR/conf.d/zz-custom.ini"',
+    'COPY docker/remoteip.conf /etc/apache2/conf-available/remoteip.conf',
+    'COPY docker/apache-tune.conf /etc/apache2/conf-available/apache-tune.conf',
+    'RUN a2enconf remoteip apache-tune',
     '',
-    'WORKDIR /var/www/html',
-    'COPY . .',
-    c.facts.hasComposer && 'COPY --from=vendor /app/vendor ./vendor',
-    'RUN chown -R www-data:www-data /var/www/html',
+    docroot !== '/var/www/html' &&
+      `RUN sed -ri "s!/var/www/html!${docroot}!g" \\\n    /etc/apache2/sites-available/*.conf /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf`,
+    'RUN sed -ri "s/AllowOverride None/AllowOverride All/g" /etc/apache2/apache2.conf',
+    '',
+    'COPY . /var/www/html/',
+    c.facts.hasComposer && 'COPY --from=vendor /app/vendor/ /var/www/html/vendor/',
+    'RUN mkdir -p /var/www/html/uploads /var/www/html/storage/cache /var/www/html/storage/logs \\',
+    ' && chown -R www-data:www-data /var/www/html',
+    '',
     'EXPOSE 80',
   );
 }
@@ -59,6 +70,7 @@ function phpDockerfile(c: TemplateContext): string {
 function nextDockerfile(c: TemplateContext): string {
   const install = c.facts.hasPackageLock ? 'npm ci' : 'npm install';
   return lines(
+    '# syntax=docker/dockerfile:1',
     'FROM node:22-alpine AS deps',
     'WORKDIR /app',
     'COPY package.json package-lock.json* ./',
@@ -71,7 +83,7 @@ function nextDockerfile(c: TemplateContext): string {
     'ENV NEXT_TELEMETRY_DISABLED=1',
     'RUN npm run build',
     '',
-    'FROM node:22-alpine AS run',
+    'FROM node:22-alpine AS runtime',
     'WORKDIR /app',
     'ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0',
     '# Needs `output: "standalone"` in next.config',
@@ -87,6 +99,7 @@ function nextDockerfile(c: TemplateContext): string {
 function nodeDockerfile(c: TemplateContext): string {
   const install = c.facts.hasPackageLock ? 'npm ci' : 'npm install';
   return lines(
+    '# syntax=docker/dockerfile:1',
     'FROM node:22-alpine AS build',
     'WORKDIR /app',
     'COPY package.json package-lock.json* ./',
@@ -95,11 +108,11 @@ function nodeDockerfile(c: TemplateContext): string {
     'RUN npm run build --if-present',
     'RUN npm prune --omit=dev',
     '',
-    'FROM node:22-alpine',
+    'FROM node:22-alpine AS runtime',
     'WORKDIR /app',
     'ENV NODE_ENV=production PORT=3000',
     'COPY --from=build /app .',
-    '# Persistent data (SQLite etc.) lives here; the compose file mounts a volume on it',
+    '# Persistent data (SQLite etc.) lives here; compose mounts a volume on it',
     'RUN mkdir -p /app/data && chown -R node:node /app/data',
     'USER node',
     'EXPOSE 3000',
@@ -109,7 +122,8 @@ function nodeDockerfile(c: TemplateContext): string {
 
 function pythonDockerfile(c: TemplateContext): string {
   return lines(
-    'FROM python:3.12-slim',
+    '# syntax=docker/dockerfile:1',
+    'FROM python:3.12-slim AS runtime',
     'WORKDIR /app',
     'ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1',
     c.facts.hasRequirements ? 'COPY requirements.txt ./' : 'COPY . .',
@@ -126,60 +140,63 @@ function pythonDockerfile(c: TemplateContext): string {
 }
 
 function staticDockerfile(): string {
-  return lines('FROM nginx:alpine', 'COPY . /usr/share/nginx/html', 'EXPOSE 80');
+  return lines(
+    '# syntax=docker/dockerfile:1',
+    'FROM nginx:alpine AS runtime',
+    'COPY . /usr/share/nginx/html',
+    'EXPOSE 80',
+  );
 }
 
 // ------------------------------------------------------------------- Compose
 
-const INTERNAL_PORT: Record<ProjectType, number> = {
-  php: 80,
-  next: 3000,
-  node: 3000,
-  python: 8000,
-  static: 80,
-};
-
+/**
+ * Production-shaped compose: no published ports, the container joins the
+ * external `proxy` network (Caddy reaches it by container name), and PHP also
+ * joins `db_net` where the shared database lives.
+ * One-time setup on a machine: docker network create proxy && docker network create db_net
+ */
 function compose(c: TemplateContext): string {
-  const image = `${slug(c.name)}:local`;
-  const app = [
-    '  app:',
+  const name = slug(c.name);
+  const needsDb = c.type === 'php';
+  const networks = needsDb ? ['proxy', 'db_net'] : ['proxy'];
+
+  const volumes: Record<ProjectType, string[]> = {
+    php: [
+      './uploads:/var/www/html/uploads',
+      ...(c.facts.phpPublicDir ? ['./uploads:/var/www/html/public/uploads'] : []),
+      './.env:/var/www/html/.env:ro',
+      './storage/logs:/var/www/html/storage/logs',
+    ],
+    node: ['data:/app/data'],
+    next: [],
+    python: [],
+    static: [],
+  };
+
+  return lines(
+    'services:',
+    `  ${name}:`,
     '    build: .',
-    `    image: ${image}`,
+    `    image: ghcr.io/${c.imageRepo}:latest`,
+    `    container_name: ${name}`,
     '    restart: unless-stopped',
     '    env_file:',
     '      - path: .env',
     '        required: false',
-    '    ports:',
-    `      - "127.0.0.1:\${APP_PORT:-${c.port}}:${INTERNAL_PORT[c.type]}"`,
-  ];
-
-  if (c.type === 'php') {
-    app.push('    depends_on:', '      - db');
-    return lines(
-      'services:',
-      ...app,
-      '  db:',
-      '    image: mariadb:11',
-      '    restart: unless-stopped',
-      '    environment:',
-      '      MARIADB_DATABASE: ${DB_NAME:-app}',
-      '      MARIADB_USER: ${DB_USER:-app}',
-      '      MARIADB_PASSWORD: ${DB_PASS:-change-me}',
-      '      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-change-me-too}',
-      '    volumes:',
-      '      - db_data:/var/lib/mysql',
-      '',
-      'volumes:',
-      '  db_data:',
-    );
-  }
-
-  if (c.type === 'node') {
-    app.push('    volumes:', '      - data:/app/data');
-    return lines('services:', ...app, '', 'volumes:', '  data:');
-  }
-
-  return lines('services:', ...app);
+    '    environment:',
+    '      TZ: Asia/Tehran',
+    volumes[c.type].length > 0 && '    volumes:',
+    ...volumes[c.type].map((v) => `      - ${v}`),
+    '    mem_limit: 512m',
+    `    networks: [${networks.join(', ')}]`,
+    '',
+    'networks:',
+    ...networks.flatMap((n) => [`  ${n}:`, '    external: true']),
+    c.type === 'node' && '',
+    c.type === 'node' && 'volumes:',
+    c.type === 'node' && '  data:',
+  );
 }
 
 // ------------------------------------------------------------- Support files
@@ -199,23 +216,60 @@ const COMMON_IGNORE = [
 ];
 
 const EXTRA_IGNORE: Record<ProjectType, string[]> = {
-  php: ['vendor'],
+  // uploads and logs are mounted at runtime, never baked into the image
+  php: ['vendor', 'uploads', 'storage/logs', 'storage/cache'],
   next: ['node_modules', '.next', 'out'],
-  node: ['node_modules', 'dist'],
+  node: ['node_modules', 'dist', 'data'],
   python: ['__pycache__', '*.pyc', '.venv', 'venv'],
   static: [],
 };
 
-function envExample(c: TemplateContext): string {
-  const common = [`APP_PORT=${c.port}`];
-  const extra: Record<ProjectType, string[]> = {
-    php: ['DB_HOST=db', 'DB_NAME=app', 'DB_USER=app', 'DB_PASS=change-me', 'DB_ROOT_PASSWORD=change-me-too'],
-    next: [],
-    node: [],
-    python: ['APP_MODULE=main:app'],
-    static: [],
-  };
-  return lines(...common, ...extra[c.type]);
+/** PHP tuning files copied by the Dockerfile. Starting points sized for a 512 MB container. */
+const PHP_SUPPORT: FileMap = {
+  'docker/custom.ini': lines(
+    '; Loaded after php.ini-production',
+    'date.timezone = Asia/Tehran',
+    'memory_limit = 256M',
+    'upload_max_filesize = 10M',
+    'post_max_size = 12M',
+    'max_execution_time = 30',
+    'expose_php = Off',
+    'display_errors = Off',
+    'log_errors = On',
+    'error_log = /dev/stderr',
+    'opcache.enable = 1',
+    'opcache.memory_consumption = 128',
+    'opcache.max_accelerated_files = 10000',
+    'opcache.validate_timestamps = 0',
+  ),
+  'docker/remoteip.conf': lines(
+    '# Trust X-Forwarded-For only from the Docker networks (Caddy)',
+    'RemoteIPHeader X-Forwarded-For',
+    'RemoteIPInternalProxy 172.16.0.0/12',
+    'RemoteIPInternalProxy 10.0.0.0/8',
+    'RemoteIPInternalProxy 192.168.0.0/16',
+  ),
+  'docker/apache-tune.conf': lines(
+    'ServerTokens Prod',
+    'ServerSignature Off',
+    'KeepAlive On',
+    'KeepAliveTimeout 3',
+    'Timeout 60',
+    '',
+    '<IfModule mpm_prefork_module>',
+    '    StartServers 2',
+    '    MinSpareServers 2',
+    '    MaxSpareServers 4',
+    '    MaxRequestWorkers 12',
+    '    MaxConnectionsPerChild 500',
+    '</IfModule>',
+  ),
+};
+
+function envExample(c: TemplateContext): string | null {
+  // PHP projects own their .env.example (it is application-specific).
+  if (c.type === 'python') return lines('APP_MODULE=main:app');
+  return null;
 }
 
 function projectYml(c: TemplateContext): string {
@@ -225,7 +279,11 @@ function projectYml(c: TemplateContext): string {
     `type: ${c.type}`,
     'baseBranch: main',
     'docker:',
-    `  port: ${c.port}`,
+    `  container: ${slug(c.name)}`,
+    `  port: ${CONTAINER_PORT[c.type]}`,
+    '  networks:',
+    '    - proxy',
+    ...(c.type === 'php' ? ['    - db_net'] : []),
   );
 }
 
@@ -240,11 +298,14 @@ export function renderTemplate(c: TemplateContext): FileMap {
     static: staticDockerfile,
   }[c.type](c);
 
+  const env = envExample(c);
+
   return {
     'Dockerfile': dockerfile,
     '.dockerignore': lines(...COMMON_IGNORE, ...EXTRA_IGNORE[c.type]),
     'docker-compose.yml': compose(c),
-    '.env.example': envExample(c),
+    ...(env ? { '.env.example': env } : {}),
+    ...(c.type === 'php' ? PHP_SUPPORT : {}),
     'nad.project.yml': projectYml(c),
   };
 }
