@@ -7,8 +7,13 @@
   "bin": {
     "nad": "./bin/nad.js"
   },
-  "files": ["bin"],
+  "files": [
+    "bin"
+  ],
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
   }
 }
