@@ -3,6 +3,8 @@ import { Command } from 'commander';
 import { hiCommand } from './commands/hi.js';
 import { gitCommand } from './commands/git.js';
 import { featCommand } from './commands/feat.js';
+import { initCommand } from './commands/init.js';
+import { inspectCommand } from './commands/inspect.js';
 import { handleError } from './core/errors.js';
 
 const program = new Command();
@@ -11,6 +13,8 @@ program.option('--verbose', 'Show full stack traces');
 program.addCommand(hiCommand);
 program.addCommand(gitCommand);
 program.addCommand(featCommand);
+program.addCommand(initCommand);
+program.addCommand(inspectCommand);
 
 // exitOverride is not inherited: apply to every command, and silence
 // commander's own output so handleError renders it consistently.
