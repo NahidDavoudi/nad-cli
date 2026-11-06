@@ -5,15 +5,21 @@
   "private": true,
   "type": "module",
   "bin": {
-    "nad": "./bin/nad.js"
+    "nad": "./dist/cli.js"
   },
-  "files": [
-    "bin"
-  ],
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
   }
 }
