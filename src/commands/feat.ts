@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { startFeatureBranch, NotAGitRepoError, DirtyTreeError } from '../core/git.js';
+import { startFeatureBranch, NotAGitRepoError, DirtyTreeError, BranchExistsError } from '../core/git.js';
 
 export const featCommand = new Command('feat')
   .argument('<name>', 'Feature name')
@@ -10,7 +10,7 @@ export const featCommand = new Command('feat')
       const branch = await startFeatureBranch(name, options.base);
       console.log(`Switched to new branch: ${branch}`);
     } catch (error) {
-      if (error instanceof NotAGitRepoError || error instanceof DirtyTreeError) {
+      if (error instanceof NotAGitRepoError || error instanceof DirtyTreeError || error instanceof BranchExistsError) {
         console.error(error.message);
       } else {
         console.error(`Git failed: ${(error as Error).message}`);
