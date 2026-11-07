@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { execFileSync } from 'node:child_process';
-import { basename, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
 import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug } from '../core/templates.js';
@@ -86,6 +87,10 @@ export const initCommand = new Command('init')
     if (type === 'node' && !detection.facts.scripts.start) {
       ui.warn(`package.json has no "start" script; the container runs ${ui.code('npm start')}.`);
     }
+    if (type === 'php' && !existsSync(join(dir, '.env'))) {
+      ui.warn('The compose file bind-mounts ./.env; if the file does not exist, Docker creates a directory named .env instead.');
+      ui.hint(`Create ${ui.code('.env')} before the first docker compose up.`);
+    }
 
     const name = options.name ?? basename(dir);
     const files = renderTemplate({
@@ -112,7 +117,16 @@ export const initCommand = new Command('init')
       const backup = applyFiles(dir, ops);
       ui.success(`Wrote ${changes.length} file(s).`);
       ui.hint(`First time on this machine: ${ui.code('docker network create proxy')}${type === 'php' ? ' && docker network create db_net' : ''}`);
-      if (backup) ui.info(`Originals backed up to ${ui.code(backup)}`);
+      if (backup) {
+        ui.info(`Originals backed up to ${ui.code(backup)}`);
+        const gitignore = join(dir, '.gitignore');
+        const ignoresNad =
+          existsSync(gitignore) &&
+          readFileSync(gitignore, 'utf8').split(/\r?\n/).some((line) => /^\s*\.nad\/?\s*$/.test(line));
+        if (!ignoresNad) {
+          ui.hint(`Consider adding ${ui.code('.nad/')} to .gitignore — backups live under ${ui.code('.nad/backup')}.`);
+        }
+      }
     }
 
     if (skipped.length > 0) {

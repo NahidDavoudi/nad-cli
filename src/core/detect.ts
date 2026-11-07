@@ -63,7 +63,9 @@ function has(dir: string, ...names: string[]): string | undefined {
 /**
  * Looks at files only (never runs anything).
  * Priority: next > php > node > python > static.
- * PHP beats node on purpose: PHP shops usually carry a package.json for Tailwind.
+ * PHP beats node on purpose: PHP shops usually carry a package.json for
+ * frontend tooling, so a package.json alone never adds a node candidate
+ * once php matched.
  */
 export function detectProject(dir: string): Detection {
   const evidence: string[] = [];
@@ -85,7 +87,7 @@ export function detectProject(dir: string): Detection {
     if (phpIndex) evidence.push(`${phpIndex} found`);
   }
 
-  if (pkg && !candidates.includes('next')) {
+  if (pkg && !candidates.includes('next') && !candidates.includes('php')) {
     candidates.push('node');
     evidence.push(has(dir, 'tsconfig.json') ? 'package.json + tsconfig.json found' : 'package.json found');
   }

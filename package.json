@@ -2,6 +2,7 @@
   "name": "@nad/cli",
   "version": "0.0.1",
   "description": "Nad CLI",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,10 +13,11 @@
   ],
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "commander": "^15.0.0",
