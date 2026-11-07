@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
@@ -117,7 +117,16 @@ export const initCommand = new Command('init')
       const backup = applyFiles(dir, ops);
       ui.success(`Wrote ${changes.length} file(s).`);
       ui.hint(`First time on this machine: ${ui.code('docker network create proxy')}${type === 'php' ? ' && docker network create db_net' : ''}`);
-      if (backup) ui.info(`Originals backed up to ${ui.code(backup)}`);
+      if (backup) {
+        ui.info(`Originals backed up to ${ui.code(backup)}`);
+        const gitignore = join(dir, '.gitignore');
+        const ignoresNad =
+          existsSync(gitignore) &&
+          readFileSync(gitignore, 'utf8').split(/\r?\n/).some((line) => /^\s*\.nad\/?\s*$/.test(line));
+        if (!ignoresNad) {
+          ui.hint(`Consider adding ${ui.code('.nad/')} to .gitignore — backups live under ${ui.code('.nad/backup')}.`);
+        }
+      }
     }
 
     if (skipped.length > 0) {
