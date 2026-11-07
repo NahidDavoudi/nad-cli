@@ -1,4 +1,5 @@
 import type { Detection, ProjectType } from './detect.js';
+import { withDefaults, type PersistentPath } from './persist.js';
 
 export interface TemplateContext {
   name: string;
@@ -6,6 +7,8 @@ export interface TemplateContext {
   /** `owner/repo` (lowercase) used for the GHCR image name. */
   imageRepo: string;
   facts: Detection['facts'];
+  /** Runtime folders found by detectPersistentPaths (defaults are added here). */
+  persist: PersistentPath[];
 }
 
 /** path (relative, forward slashes) -> file content */
@@ -23,6 +26,16 @@ export const CONTAINER_PORT: Record<ProjectType, number> = {
 const lines = (...parts: (string | false | undefined)[]): string =>
   parts.filter((p): p is string => typeof p === 'string').join('\n') + '\n';
 
+const APP_ROOT: Record<ProjectType, string> = {
+  php: '/var/www/html',
+  next: '/app',
+  node: '/app',
+  python: '/app',
+  static: '/usr/share/nginx/html',
+};
+
+const volumeName = (path: string): string => path.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').toLowerCase();
+
 export const slug = (name: string): string =>
   name.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'app';
 
@@ -34,6 +47,16 @@ export const PHP_PROVIDED_EXTENSIONS = new Set([
   'reflection', 'session', 'simplexml', 'sodium', 'spl', 'standard', 'tokenizer', 'xml',
   'xmlreader', 'xmlwriter', 'zlib', 'date', 'mysqlnd', 'random',
 ]);
+
+/** Dockerfile lines creating the runtime folders so a non-root user can write to them. */
+function persistDirs(c: TemplateContext, user: string): string[] {
+  const paths = withDefaults(c.type, c.persist).map((p) => `${APP_ROOT[c.type]}/${p.path}`);
+  if (paths.length === 0) return [];
+  return [
+    '# Runtime folders (compose mounts volumes on them)',
+    `RUN mkdir -p ${paths.join(' ')} && chown -R ${user}:${user} ${paths.join(' ')}`,
+  ];
+}
 
 // ---------------------------------------------------------------- Dockerfiles
 
@@ -69,7 +92,9 @@ function phpDockerfile(c: TemplateContext): string {
     '',
     'COPY . /var/www/html/',
     c.facts.hasComposer && 'COPY --from=vendor /app/vendor/ /var/www/html/vendor/',
-    'RUN mkdir -p /var/www/html/uploads /var/www/html/storage/cache /var/www/html/storage/logs \\',
+    `RUN mkdir -p ${[...new Set([...withDefaults('php', c.persist).map((p) => p.path), 'storage/cache'])]
+      .map((p) => `/var/www/html/${p}`)
+      .join(' ')} \\`,
     ' && chown -R www-data:www-data /var/www/html',
     '',
     'EXPOSE 80',
@@ -121,8 +146,7 @@ function nodeDockerfile(c: TemplateContext): string {
     'WORKDIR /app',
     'ENV NODE_ENV=production PORT=3000',
     'COPY --from=build /app .',
-    '# Persistent data (SQLite etc.) lives here; compose mounts a volume on it',
-    'RUN mkdir -p /app/data && chown -R node:node /app/data',
+    ...persistDirs(c, 'node'),
     'USER node',
     'EXPOSE 3000',
     'CMD ["npm", "start"]',
@@ -141,6 +165,7 @@ function pythonDockerfile(c: TemplateContext): string {
       : 'RUN pip install --no-cache-dir .',
     c.facts.hasRequirements && 'COPY . .',
     'RUN useradd -m app && chown -R app /app',
+    ...persistDirs(c, 'app'),
     'USER app',
     'EXPOSE 8000',
     '# Override the app entry with APP_MODULE (default: main:app)',
@@ -170,18 +195,16 @@ function compose(c: TemplateContext): string {
   const needsDb = c.type === 'php';
   const networks = needsDb ? ['proxy', 'db_net'] : ['proxy'];
 
-  const volumes: Record<ProjectType, string[]> = {
-    php: [
-      './uploads:/var/www/html/uploads',
-      ...(c.facts.phpPublicDir ? ['./uploads:/var/www/html/public/uploads'] : []),
-      './.env:/var/www/html/.env:ro',
-      './storage/logs:/var/www/html/storage/logs',
-    ],
-    node: ['data:/app/data'],
-    next: [],
-    python: [],
-    static: [],
-  };
+  const persist = withDefaults(c.type, c.persist);
+  const root = APP_ROOT[c.type];
+  // PHP: bind mounts (easy to back up, matches the existing server setup).
+  // Node/Python: named volumes, so the non-root user can write without chown on the host.
+  const named = c.type !== 'php';
+  const mounts: string[] = [
+    ...persist.map((p) => (named ? `${volumeName(p.path)}:${root}/${p.path}` : `./${p.path}:${root}/${p.path}`)),
+    ...(c.type === 'php' ? ['./.env:/var/www/html/.env:ro'] : []),
+  ];
+  const namedVolumes = named ? persist.map((p) => volumeName(p.path)) : [];
 
   return lines(
     'services:',
@@ -195,16 +218,16 @@ function compose(c: TemplateContext): string {
     '        required: false',
     '    environment:',
     '      TZ: Asia/Tehran',
-    volumes[c.type].length > 0 && '    volumes:',
-    ...volumes[c.type].map((v) => `      - ${v}`),
+    mounts.length > 0 && '    volumes:',
+    ...mounts.map((v) => `      - ${v}`),
     '    mem_limit: 512m',
     `    networks: [${networks.join(', ')}]`,
     '',
     'networks:',
     ...networks.flatMap((n) => [`  ${n}:`, '    external: true']),
-    c.type === 'node' && '',
-    c.type === 'node' && 'volumes:',
-    c.type === 'node' && '  data:',
+    namedVolumes.length > 0 && '',
+    namedVolumes.length > 0 && 'volumes:',
+    ...namedVolumes.map((v) => `  ${v}:`),
   );
 }
 
@@ -226,9 +249,9 @@ const COMMON_IGNORE = [
 
 const EXTRA_IGNORE: Record<ProjectType, string[]> = {
   // uploads and logs are mounted at runtime, never baked into the image
-  php: ['vendor', 'uploads', 'storage/logs', 'storage/cache'],
+  php: ['vendor', 'storage/cache'],
   next: ['node_modules', '.next', 'out'],
-  node: ['node_modules', 'dist', 'data'],
+  node: ['node_modules', 'dist'],
   python: ['__pycache__', '*.pyc', '.venv', 'venv'],
   static: [],
 };
@@ -282,6 +305,7 @@ function envExample(c: TemplateContext): string | null {
 }
 
 function projectYml(c: TemplateContext): string {
+  const persist = withDefaults(c.type, c.persist);
   return lines(
     'schemaVersion: 1',
     `name: ${slug(c.name)}`,
@@ -293,6 +317,8 @@ function projectYml(c: TemplateContext): string {
     '  networks:',
     '    - proxy',
     ...(c.type === 'php' ? ['    - db_net'] : []),
+    ...(persist.length > 0 ? ['persist:'] : []),
+    ...persist.flatMap((p) => [`  - path: ${p.path}`, `    kind: ${p.kind}`]),
   );
 }
 
@@ -311,7 +337,9 @@ export function renderTemplate(c: TemplateContext): FileMap {
 
   return {
     'Dockerfile': dockerfile,
-    '.dockerignore': lines(...COMMON_IGNORE, ...EXTRA_IGNORE[c.type]),
+    '.dockerignore': lines(
+      ...new Set([...COMMON_IGNORE, ...EXTRA_IGNORE[c.type], ...withDefaults(c.type, c.persist).map((p) => p.path)]),
+    ),
     'docker-compose.yml': compose(c),
     ...(env ? { '.env.example': env } : {}),
     ...(c.type === 'php' ? PHP_SUPPORT : {}),

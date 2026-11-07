@@ -4,6 +4,7 @@ import { basename, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
 import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug } from '../core/templates.js';
+import { detectPersistentPaths } from '../core/persist.js';
 import { applyFiles, planFiles, type OpAction } from '../core/scaffold.js';
 import { ui } from '../core/ui.js';
 
@@ -87,12 +88,16 @@ export const initCommand = new Command('init')
       ui.warn(`package.json has no "start" script; the container runs ${ui.code('npm start')}.`);
     }
 
+    const persist = detectPersistentPaths(dir, type);
+    for (const p of persist) ui.info(`Runtime ${p.kind}: ${ui.code(p.path)} (${p.evidence})`);
+
     const name = options.name ?? basename(dir);
     const files = renderTemplate({
       name,
       type,
       imageRepo: githubRepo(dir) ?? `nahiddavoudi/${slug(name)}`,
       facts: detection.facts,
+      persist,
     });
     const ops = planFiles(dir, files, Boolean(options.force));
 
