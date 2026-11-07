@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { execFileSync } from 'node:child_process';
-import { basename, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
 import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug } from '../core/templates.js';
@@ -85,6 +86,10 @@ export const initCommand = new Command('init')
     }
     if (type === 'node' && !detection.facts.scripts.start) {
       ui.warn(`package.json has no "start" script; the container runs ${ui.code('npm start')}.`);
+    }
+    if (type === 'php' && !existsSync(join(dir, '.env'))) {
+      ui.warn('The compose file bind-mounts ./.env; if the file does not exist, Docker creates a directory named .env instead.');
+      ui.hint(`Create ${ui.code('.env')} before the first docker compose up.`);
     }
 
     const name = options.name ?? basename(dir);
