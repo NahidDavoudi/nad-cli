@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { basename, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
-import { renderTemplate, slug } from '../core/templates.js';
+import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug } from '../core/templates.js';
 import { applyFiles, planFiles, type OpAction } from '../core/scaffold.js';
 import { ui } from '../core/ui.js';
 
@@ -74,6 +74,17 @@ export const initCommand = new Command('init')
     }
     if (type === 'next' && detection.facts.packageManager && detection.facts.packageManager !== 'npm') {
       ui.warn(`Found a ${detection.facts.packageManager} lockfile; the template installs with npm.`);
+    }
+
+    const missingExts = detection.facts.phpExtensions.filter((e) => !PHP_PROVIDED_EXTENSIONS.has(e));
+    if (type === 'php' && missingExts.length > 0) {
+      ui.warn(`composer.json requires ext-${missingExts.join(', ext-')}, which the generated Dockerfile does not install.`);
+    }
+    if (type === 'next' && !detection.facts.scripts.build) {
+      ui.warn(`package.json has no "build" script; the Dockerfile runs ${ui.code('npm run build')}.`);
+    }
+    if (type === 'node' && !detection.facts.scripts.start) {
+      ui.warn(`package.json has no "start" script; the container runs ${ui.code('npm start')}.`);
     }
 
     const name = options.name ?? basename(dir);
