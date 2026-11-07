@@ -1,15 +1,15 @@
 # Nad CLI
 
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen)](https://nodejs.org)
+[![CI](https://github.com/NahidDavoudi/nad-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/NahidDavoudi/nad-cli/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/badge/node-22-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-7.0-blue)](https://www.typescriptlang.org)
-[![commander](https://img.shields.io/badge/commander-15-blue)](https://github.com/tj/commander.js)
-[![License](https://img.shields.io/badge/license-private-lightgrey)](#license)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](#license)
 
-The command-line interface for the **Nad Platform** — a single, standardised workflow for developing, testing, shipping and operating every Nad project.
+The command-line interface for the **Nad Platform**: one standard workflow for developing, testing, shipping and operating every Nad project.
 
-`nad` is the entry point developers (and AI agents) use to bootstrap a repository, normalise its Git structure, start feature branches and — in later phases — drive CI/CD, staging environments and production releases.
+`nad` is the entry point developers (and AI agents) use to prepare a repository for containers, start feature branches and, in later phases, drive CI/CD, staging and production releases.
 
-> **Status:** early development (`0.0.1`). Three commands are implemented; the rest are on the [roadmap](#roadmap).
+> **Status:** early development (`0.0.1`). Five commands are implemented (`hi`, `git status`, `feat`, `init`, `inspect`). The rest are on the [roadmap](#roadmap).
 
 ---
 
@@ -18,11 +18,11 @@ The command-line interface for the **Nad Platform** — a single, standardised w
 - [Why Nad CLI](#why-nad-cli)
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [Usage](#usage)
 - [Commands](#commands)
 - [How it behaves](#how-it-behaves)
 - [Project structure](#project-structure)
 - [Development](#development)
+- [Continuous integration](#continuous-integration)
 - [Roadmap](#roadmap)
 - [Design principles](#design-principles)
 - [Known limitations](#known-limitations)
@@ -32,66 +32,43 @@ The command-line interface for the **Nad Platform** — a single, standardised w
 
 ## Why Nad CLI
 
-Every new project repeats the same setup work: repository layout, branch conventions, Dockerfiles, GitHub Actions, staging, backups, rollbacks. Nad CLI exists to define that workflow **once**, encode it as code, and reuse it across all Nad projects — so a project can be brought up to standard with a handful of commands instead of a checklist.
+Every new project repeats the same setup work: repository layout, branch conventions, Dockerfiles, CI, staging, backups, rollbacks. Nad CLI defines that workflow **once**, encodes it as code and reuses it across all Nad projects.
 
-The CLI is deliberately an **orchestration layer**. It does not reimplement Git, GitHub, Docker or Caddy; it coordinates them behind a consistent, safe interface.
+The CLI is deliberately an **orchestration layer**. It does not reimplement Git, GitHub, Docker or Caddy; it coordinates them behind one consistent, safe interface.
 
 ## Requirements
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Node.js | **≥ 22.12** | Required by `commander@15` and `execa@10` |
-| Git | any recent version | Must be available on `PATH` |
-| npm | ≥ 9 | For installation and scripts |
+| Node.js | 22 | CI runs on Node 22 |
+| Git | any recent version | must be on `PATH` |
+| npm | 9 or newer | for installation and scripts |
+| Docker + Compose | recent | only to *use* the generated files, not to run `nad` |
 
 ## Installation
 
-The package is currently `private` and is **not published to npm**. Install it from source:
+The package is `private` and is **not published to npm**. Install it from source:
 
 ```bash
-git clone <repository-url> nad-cli
+git clone https://github.com/NahidDavoudi/nad-cli.git
 cd nad-cli
 npm install
 npm run build
+npm link          # makes the `nad` command available globally
 ```
 
-Then make the binary available globally:
-
-```bash
-npm link          # symlink into your global bin
-# or
-npm install -g .
-```
-
-Verify the install:
+Verify:
 
 ```bash
 nad --version
 nad --help
 ```
 
-## Usage
-
-```bash
-# Greet someone (smoke test)
-nad hi
-nad hi Ada
-
-# Inspect the current repository
-nad git status
-
-# Start a feature branch from main
-nad feat payment
-
-# Start a feature branch from a different base
-nad feat dashboard --base develop
-```
-
 ## Commands
 
 ### `nad hi [name]`
 
-Prints a greeting. Defaults to `love` when no name is given. Useful as a smoke test after installation.
+Prints a greeting (default name: `love`). A smoke test for the installation.
 
 ```text
 $ nad hi Ada
@@ -100,14 +77,7 @@ $ nad hi Ada
 
 ### `nad git status`
 
-Prints the raw `git status --porcelain=v1 --branch` output for the current repository. Fails with a clear message if the current folder is not a Git repository.
-
-```text
-$ nad git status
-## feature/payment...origin/feature/payment
- M src/commands/feat.ts
-?? src/commands/merge.ts
-```
+Prints `git status --porcelain=v1 --branch` for the current repository. Fails with a clear message outside a Git repository.
 
 ### `nad feat <name> [--base <branch>]`
 
@@ -117,24 +87,63 @@ Creates a standard feature branch named `feature/<name>`.
 |---|---|---|
 | `--base <branch>` | `main` | Branch to create the feature branch from |
 
-What happens:
+All checks run **before** anything is changed:
 
-1. Verifies the current folder is a Git repository.
-2. Verifies the working tree is clean (no uncommitted changes).
-3. Verifies `feature/<name>` does not already exist.
-4. Checks out the base branch.
-5. Runs `git pull --ff-only` **if** the base branch has an upstream.
-6. Creates and switches to `feature/<name>`.
+1. The current folder is a Git repository.
+2. The working tree is clean (no uncommitted changes). Nothing is stashed for you.
+3. `feature/<name>` does not already exist.
+4. The base branch exists.
 
-```text
-$ nad feat payment
-✔ Switched to new branch: feature/payment
+Then it checks out the base branch, runs `git pull --ff-only` **only if** the base has an upstream, and creates and switches to `feature/<name>`.
+
+### `nad init [options]`
+
+Prepares the current project to run in a container. It makes no network calls and never runs your project's code; it reads files and the `origin` remote URL.
+
+| Option | Description |
+|---|---|
+| `-t, --template <type>` | Project type: `php`, `next`, `node`, `python`, `static`. Auto-detected if omitted |
+| `-n, --name <name>` | Container / image name (default: folder name) |
+| `--dry-run` | Print what would be written, write nothing |
+| `--force` | Overwrite files that differ. Originals are first copied to `.nad/backup/<timestamp>/` |
+
+**Detection.** Priority is `next` > `php` > `node` > `python` > `static`. PHP wins over Node on purpose, because PHP projects often carry a `package.json` for frontend tooling. When several types match, `init` says so and suggests `--template`.
+
+**Files written.** Existing files are never overwritten silently. Each file is reported as `create`, `unchanged`, `skip` (exists and differs) or `overwrite` (only with `--force`).
+
+| File | Written for |
+|---|---|
+| `Dockerfile` | every type |
+| `.dockerignore` | every type |
+| `docker-compose.yml` | every type |
+| `docker/custom.ini`, `docker/remoteip.conf`, `docker/apache-tune.conf` | `php` only (PHP and Apache tuning, sized for a 512 MB container) |
+| `.env.example` | `python` only (PHP projects keep their own) |
+| `nad.project.yml` | every type |
+
+**What the generated compose file assumes.**
+
+- No published ports. A reverse proxy (Caddy) reaches the container by name over the external `proxy` Docker network. PHP projects also join `db_net`, where the shared database lives.
+- The image is named `ghcr.io/<owner>/<repo>:latest`, taken from the `origin` remote (lowercased, as GHCR requires).
+- `TZ=Asia/Tehran`, `mem_limit: 512m`, `restart: unless-stopped`.
+- PHP mounts `./uploads`, `./storage/logs` and `./.env` (read-only) into the container.
+
+On first use on a machine, create the networks once:
+
+```bash
+docker network create proxy
+docker network create db_net      # PHP projects only
 ```
+
+**Warnings** (the files are still written): missing `output: 'standalone'` in a Next.js config, a non-npm lockfile, PHP extensions from `composer.json` that the image does not install, and a missing `build` (Next) or `start` (Node) script.
+
+### `nad inspect [--json]`
+
+Shows what Nad detects about the project: type, the evidence for it, other matching types and whether `nad.project.yml` exists. `--json` prints the same data as JSON, which is the form AI agents and scripts should use.
 
 ## How it behaves
 
 - **Safe by default.** Destructive or ambiguous operations stop and report instead of guessing.
-- **Readable errors.** All failures are funnelled through a single handler that prints a red message plus an optional dimmed hint, then exits with code `1`.
+- **One error path.** Every failure goes through a single handler that prints a red message plus an optional dimmed hint:
 
   ```text
   $ nad feat payment
@@ -142,25 +151,37 @@ $ nad feat payment
     → Commit them first.
   ```
 
-- **Exit codes.** `0` on success, `1` on any handled failure.
-- **Missing Git.** If the `git` binary is not found, you get an explicit message rather than a stack trace.
+- **Exit codes.** `0` on success, `1` on any handled failure. Running `nad` or `nad git` with no subcommand prints help and exits `1`.
+- **Debugging.** `--verbose` (or `DEBUG=nad`) prints full stack traces.
+- **Missing Git.** If the `git` binary is not found, you get an explicit message, not a stack trace.
+- **Colour.** Output is coloured by meaning (green success, red error, yellow warning, dim hint). Colour is removed automatically when output is piped or `NO_COLOR` is set.
 
 ## Project structure
 
 ```text
 src/
-├── cli.ts            # entry point — registers commands, wires error handling
+├── cli.ts              # entry point: registers commands, wires error handling
 ├── commands/
-│   ├── hi.ts         # nad hi
-│   ├── git.ts        # nad git <subcommand>
-│   └── feat.ts       # nad feat
+│   ├── hi.ts           # nad hi
+│   ├── git.ts          # nad git <subcommand>
+│   ├── feat.ts         # nad feat
+│   ├── init.ts         # nad init
+│   └── inspect.ts      # nad inspect
 └── core/
-    ├── errors.ts     # NadError hierarchy + handleError()
-    ├── git.ts        # Git primitives (isGitRepo, isClean, …)
-    └── ui.ts         # terminal output helpers (picocolors)
+    ├── errors.ts       # NadError hierarchy + handleError()
+    ├── git.ts          # Git primitives and startFeatureBranch()
+    ├── detect.ts       # project-type detection (reads files only)
+    ├── templates.ts    # renders Dockerfile / compose / support files
+    ├── scaffold.ts     # plans and applies file writes, with backups
+    └── ui.ts           # coloured terminal output helpers
+.github/workflows/ci.yml
 ```
 
-Compiled output goes to `dist/`; the `nad` binary resolves to `dist/cli.js`.
+Rules the code follows:
+
+- The logic modules in `core/` (`git`, `detect`, `templates`, `scaffold`) never print and never exit. They return results or throw a `NadError`.
+- Command actions do not catch errors. `cli.ts` catches everything and hands it to `handleError`, the only place that prints a failure and exits.
+- All output goes through `ui`.
 
 ## Development
 
@@ -169,41 +190,67 @@ npm run build     # one-off TypeScript compile (tsc)
 npm run dev       # tsc --watch
 ```
 
-After changing sources, re-run `npm run build` (or keep `npm run dev` running) before invoking `nad`.
+After changing sources, rebuild (or keep `npm run dev` running) before invoking `nad`.
 
 `tsconfig.json` targets **ES2022** with **NodeNext** module resolution, so relative imports must include the `.js` extension.
 
+Work happens on branches and reaches `main` through pull requests. Start one with:
+
+```bash
+nad feat <name>
+```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request to `main` and every push to `main`:
+
+1. Check out the code.
+2. Install Node 22.
+3. `npm ci`
+4. `npm run build`
+
+The job is named `build`. Runs on pull requests are cancelled when a newer push arrives; runs on `main` are not.
+
 ## Roadmap
 
-The platform is being built in phases. Shipped items are checked.
+Shipped items are checked.
 
-- [x] **Phase 0 — Skeleton:** CLI bootstrap, command registry, error handling, UI helpers
-- [x] **Phase 1 (partial) — Git basics:** `nad git status`, `nad feat`
-- [ ] **Phase 1 — Initialization:** `nad init` with project-type detection and templates (PHP, TypeScript, React, Static), idempotent file generation, `nad.project.yml`
-- [ ] **Phase 2 — Git standardization:** `nad git repair`, `nad git branches`, `nad git protect`, backups before rewriting history
-- [ ] **Phase 3 — Development workflow:** `nad commit`, `nad merge`, `nad merge --auto`, PR creation via GitHub CLI, CI gating
-- [ ] **Phase 4 — CI/CD:** reusable workflows, artifacts, GHCR image publishing, automatic tagging
-- [ ] **Phase 5 — Staging:** isolated Docker environments, subdomains, database cloning, health checks, reset
-- [ ] **Phase 6 — Release management:** `nad release`, `nad rollback`, release history, migrations
-- [ ] **Phase 7 — Agent integration:** controlled workspaces for AI agents on the VPS
+- [x] **Phase 0 — Skeleton:** CLI bootstrap, command registry, central error handling, UI helpers
+- [x] **Git basics:** `nad git status`, `nad feat`
+- [x] **Phase 1 — Initialization (partial):** `nad init` and `nad inspect` with detection and Docker templates for PHP, Next.js, Node, Python and static sites
+  - [ ] Generate GitHub Actions workflows from `init`
+  - [ ] Read project settings from a config file in other commands
+- [x] **CI for this repository:** build check on every PR
+- [ ] **Phase 2 — Git standardization:** `nad git repair`, `nad git branches`, `nad git protect`
+- [ ] **Phase 3 — Development workflow:** `nad commit`, `nad merge`, PR creation via GitHub CLI, CI gating
+- [ ] **Phase 4 — CI/CD:** reusable workflows, GHCR publishing, automatic tagging
+- [ ] **Phase 5 — Staging:** isolated environments, subdomains, database cloning, health checks
+- [ ] **Phase 6 — Release management:** `nad release`, `nad rollback`, release history
+- [ ] **Phase 7 — Agent integration:** controlled workspaces for AI agents
 
 ## Design principles
 
-1. **Reuse over reinvention** — wrap existing tools, don't replace them.
-2. **Automation first** — anything repeated should be a command.
-3. **Safe by default** — destructive actions require explicit confirmation.
-4. **Idempotency** — running a command twice must not corrupt state.
-5. **Environment isolation** — staging never touches production.
-6. **Artifact consistency** — the artifact tested in staging is the artifact deployed to production.
-7. **Traceability & reproducibility** — every meaningful action and release is recorded and recoverable.
+1. **Reuse over reinvention:** wrap existing tools, do not replace them.
+2. **Automation first:** anything repeated should be a command.
+3. **Safe by default:** destructive actions need explicit confirmation.
+4. **Idempotency:** running a command twice must not corrupt state.
+5. **Environment isolation:** staging never touches production.
+6. **Artifact consistency:** the artifact tested in staging is the one deployed to production.
+7. **Traceability and reproducibility:** every meaningful action and release is recorded and recoverable.
 
 ## Known limitations
 
-- Only `hi`, `git status` and `feat` are implemented.
-- `package.json` declares `"engines": { "node": ">=18" }`, but `commander@15` and `execa@10` require **Node ≥ 22.12**. The engines field should be raised to match.
-- No automated test suite yet.
-- Not published to npm (`private: true`).
+- **No real deployment has used the generated files yet.** Run `docker compose up --build` on a real project before relying on them.
+- `init` writes `nad.project.yml`, but no command reads it yet. `feat` still defaults to `main`.
+- PHP compose mounts `./.env`. If that file does not exist on the host, Docker creates a *directory* with that name. Create `.env` first.
+- `init` does not touch `.gitignore`, so `.nad/backup/` (written by `--force`) can be committed by accident.
+- When no `origin` remote exists, the image owner falls back to a hard-coded default.
+- The Python template always starts `uvicorn` and does not detect Django or Flask.
+- The compose `env_file` long form needs a recent Docker Compose (2.24 or newer).
+- `package.json` still declares `"engines": { "node": ">=18" }`, while CI runs on Node 22.
+- There is no automated test suite yet. `nad init` and `nad feat` have only been checked by hand.
+- Not published to npm (`"private": true`).
 
 ## License
 
-Private and unpublished. All rights reserved unless a license file is added to the repository.
+[MIT](LICENSE)
