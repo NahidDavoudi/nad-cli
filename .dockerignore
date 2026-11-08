@@ -1,0 +1,14 @@
+.git
+.github
+.nad
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Dockerfile
+docker-compose*.yml
+.dockerignore
+node_modules
+dist
+data

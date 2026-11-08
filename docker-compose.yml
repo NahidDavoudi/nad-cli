@@ -1,0 +1,22 @@
+services:
+  nad-cli:
+    build: .
+    image: ghcr.io/nahiddavoudi/nad-cli:latest
+    container_name: nad-cli
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TZ: Asia/Tehran
+    volumes:
+      - data:/app/data
+    mem_limit: 512m
+    networks: [proxy]
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  data:
