@@ -22,6 +22,7 @@ The command-line interface for the **Nad Platform**: one standard workflow for d
 - [How it behaves](#how-it-behaves)
 - [Project structure](#project-structure)
 - [Development](#development)
+- [Testing](#testing)
 - [Continuous integration](#continuous-integration)
 - [Roadmap](#roadmap)
 - [Design principles](#design-principles)
@@ -107,7 +108,7 @@ Prepares the current project to run in a container. It makes no network calls an
 | `--dry-run` | Print what would be written, write nothing |
 | `--force` | Overwrite files that differ. Originals are first copied to `.nad/backup/<timestamp>/` |
 
-**Detection.** Priority is `next` > `php` > `node` > `python` > `static`. PHP wins over Node on purpose, because PHP projects often carry a `package.json` for frontend tooling. When several types match, `init` says so and suggests `--template`.
+**Detection.** Priority is `next` > `php` > `node` > `python` > `static`. PHP wins over Node on purpose, because PHP projects often carry a `package.json` for frontend tooling — a `package.json` alone never adds `node` as an extra candidate when PHP already matched. When several types match, `init` says so and suggests `--template`.
 
 **Files written.** Existing files are never overwritten silently. Each file is reported as `create`, `unchanged`, `skip` (exists and differs) or `overwrite` (only with `--force`).
 
@@ -134,7 +135,7 @@ docker network create proxy
 docker network create db_net      # PHP projects only
 ```
 
-**Warnings** (the files are still written): missing `output: 'standalone'` in a Next.js config, a non-npm lockfile, PHP extensions from `composer.json` that the image does not install, and a missing `build` (Next) or `start` (Node) script.
+**Warnings** (the files are still written): missing `output: 'standalone'` in a Next.js config, a non-npm lockfile, PHP extensions from `composer.json` that the image does not install, a missing `build` (Next) or `start` (Node) script, a missing `./.env` for PHP (Docker would create a directory with that name), and — after a `--force` overwrite — a reminder to add `.nad/` to `.gitignore` if it is not ignored yet (nothing is edited for you).
 
 ### `nad inspect [--json]`
 
@@ -200,6 +201,18 @@ Work happens on branches and reaches `main` through pull requests. Start one wit
 nad feat <name>
 ```
 
+## Testing
+
+```bash
+npm test      # builds, then runs the test suite (node:test) against dist/
+```
+
+The suites live next to the code as `src/**/*.test.ts` and cover:
+
+- `detect.ts` — every project type, the empty folder, priority order, and `node` suppression when `php` already matched (a `package.json` alone no longer makes it an extra candidate).
+- `scaffold.ts` — create / unchanged / skip / overwrite decisions (on temp folders), and that overwrites back up the original to `.nad/backup/`.
+- `templates.ts` — the three PHP support files exist, and **no** generated compose file publishes `ports:`; every compose joins the external `proxy` network (plus `db_net` for PHP).
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every pull request to `main` and every push to `main`:
@@ -208,6 +221,7 @@ nad feat <name>
 2. Install Node 22.
 3. `npm ci`
 4. `npm run build`
+5. `npm test`
 
 The job is named `build`. Runs on pull requests are cancelled when a newer push arrives; runs on `main` are not.
 
@@ -242,13 +256,11 @@ Shipped items are checked.
 
 - **No real deployment has used the generated files yet.** Run `docker compose up --build` on a real project before relying on them.
 - `init` writes `nad.project.yml`, but no command reads it yet. `feat` still defaults to `main`.
-- PHP compose mounts `./.env`. If that file does not exist on the host, Docker creates a *directory* with that name. Create `.env` first.
-- `init` does not touch `.gitignore`, so `.nad/backup/` (written by `--force`) can be committed by accident.
+- If PHP's `./.env` does not exist on the host, Docker creates a *directory* with that name. `init` warns about it, but you must create the file yourself.
+- `init` never edits `.gitignore`; it only warns that `.nad/backup/` (written by `--force`) may want ignoring.
 - When no `origin` remote exists, the image owner falls back to a hard-coded default.
 - The Python template always starts `uvicorn` and does not detect Django or Flask.
 - The compose `env_file` long form needs a recent Docker Compose (2.24 or newer).
-- `package.json` still declares `"engines": { "node": ">=18" }`, while CI runs on Node 22.
-- There is no automated test suite yet. `nad init` and `nad feat` have only been checked by hand.
 - Not published to npm (`"private": true`).
 
 ## License
