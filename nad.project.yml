@@ -1,0 +1,9 @@
+schemaVersion: 1
+name: nad-cli
+type: node
+baseBranch: main
+docker:
+  container: nad-cli
+  port: 3000
+  networks:
+    - proxy
