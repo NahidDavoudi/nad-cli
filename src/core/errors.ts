@@ -23,6 +23,18 @@ export class DirtyTreeError extends NadError {
   }
 }
 
+export class NothingToCommitError extends NadError {
+  constructor() {
+    super('You have no changes to commit.', 'Add some changes first.');
+  }
+}
+
+export class ProtectedBranchError extends NadError {
+  constructor() {
+    super('You are on the main branch.', 'Start a branch with: nad feat <name>.');
+  }
+}
+
 export class BranchExistsError extends NadError {
   constructor(branch: string) {
     super(
