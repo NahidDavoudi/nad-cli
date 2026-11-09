@@ -35,6 +35,18 @@ export class ProtectedBranchError extends NadError {
   }
 }
 
+export class DetachedHeadError extends NadError {
+  constructor() {
+    super('You are in detached HEAD state (not on any branch).', 'Create a branch first: nad feat <name>.');
+  }
+}
+
+export class EmptyMessageError extends NadError {
+  constructor() {
+    super('Commit message is empty.', 'Use: nad commit "<message>".');
+  }
+}
+
 export class BranchExistsError extends NadError {
   constructor(branch: string) {
     super(

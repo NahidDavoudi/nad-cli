@@ -7,6 +7,8 @@ import {
   GitNotFoundError,
   BaseBranchNotFoundError,
   ProtectedBranchError,
+  DetachedHeadError,
+  EmptyMessageError,
   NothingToCommitError
 } from './errors.js';
 
@@ -86,12 +88,13 @@ export async function startFeatureBranch(name: string, base = 'main'): Promise<s
   return branch;
 }
 
-export async function commitAll(message: string, base = 'main'): Promise<string> {
+export async function commitAll(message: string): Promise<string> {
   if (!(await isGitRepo())) throw new NotAGitRepoError();
+  if (message.trim() === '') throw new EmptyMessageError();
   const branch = await currentBranch();
-  if (branch === 'main') {
-    throw new ProtectedBranchError();
-  }
+  // git branch --show-current prints '' on detached HEAD
+  if (branch === '') throw new DetachedHeadError();
+  if (branch === 'main') throw new ProtectedBranchError();
   if (await isClean()) throw new NothingToCommitError();
   await git(['add', '-A']);
   await git(['commit', '-m', message]);
