@@ -254,7 +254,7 @@ Shipped items are checked.
 
 ## Known limitations
 
-- **No real deployment has used the generated files yet.** Run `docker compose up --build` on a real project before relying on them.
+- **Only one real deployment has used the generated files so far.** `nad init` output ran on a VPS and the image was pulled from GHCR (verified 2026-11-09 on one real service). Other types (`next`, `node`, `python`, `static`) are untested on a real server.
 - `init` writes `nad.project.yml`, but no command reads it yet. `feat` still defaults to `main`.
 - If PHP's `./.env` does not exist on the host, Docker creates a *directory* with that name. `init` warns about it, but you must create the file yourself.
 - `init` never edits `.gitignore`; it only warns that `.nad/backup/` (written by `--force`) may want ignoring.
