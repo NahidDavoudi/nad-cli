@@ -9,7 +9,7 @@ The command-line interface for the **Nad Platform**: one standard workflow for d
 
 `nad` is the entry point developers (and AI agents) use to prepare a repository for containers, start feature branches and, in later phases, drive CI/CD, staging and production releases.
 
-> **Status:** early development (`0.0.1`). Five commands are implemented (`hi`, `git status`, `feat`, `init`, `inspect`). The rest are on the [roadmap](#roadmap).
+> **Status:** early development (`0.0.1`). Six commands are implemented (`hi`, `git status`, `feat`, `commit`, `init`, `inspect`). The rest are on the [roadmap](#roadmap).
 
 ---
 
@@ -97,6 +97,20 @@ All checks run **before** anything is changed:
 
 Then it checks out the base branch, runs `git pull --ff-only` **only if** the base has an upstream, and creates and switches to `feature/<name>`.
 
+### `nad commit <message>`
+
+Commits all changes (including untracked files) to the **current** branch.
+
+All checks run **before** anything is changed:
+
+1. The current folder is a Git repository.
+2. The message is not empty.
+3. HEAD is attached — in detached HEAD state there is no branch to commit onto, so it stops.
+4. The branch is not the protected `main`. Nothing commits onto `main` by accident.
+5. The working tree is not clean.
+
+Then it stages everything (`git add -A`), commits with your message and prints the short hash of the new commit.
+
 ### `nad init [options]`
 
 Prepares the current project to run in a container. It makes no network calls and never runs your project's code; it reads files and the `origin` remote URL.
@@ -166,6 +180,7 @@ src/
 │   ├── hi.ts           # nad hi
 │   ├── git.ts          # nad git <subcommand>
 │   ├── feat.ts         # nad feat
+│   ├── commit.ts       # nad commit
 │   ├── init.ts         # nad init
 │   └── inspect.ts      # nad inspect
 └── core/
@@ -209,21 +224,21 @@ npm test      # builds, then runs the test suite (node:test) against dist/
 
 The suites live next to the code as `src/**/*.test.ts` and cover:
 
+- `git.ts` — `commitAll` on real temp repositories: not-a-repo, empty message, clean tree, the protected `main` branch and detached HEAD each throw their own error, and a real commit on a feature branch stages everything and returns the short hash.
 - `detect.ts` — every project type, the empty folder, priority order, and `node` suppression when `php` already matched (a `package.json` alone no longer makes it an extra candidate).
 - `scaffold.ts` — create / unchanged / skip / overwrite decisions (on temp folders), and that overwrites back up the original to `.nad/backup/`.
 - `templates.ts` — the three PHP support files exist, and **no** generated compose file publishes `ports:`; every compose joins the external `proxy` network (plus `db_net` for PHP).
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every pull request to `main` and every push to `main`:
+`.github/workflows/ci.yml` runs on every pull request, every push to `main` and every `v*` tag:
 
 1. Check out the code.
-2. Install Node 22.
+2. Install Node 22 (with npm caching).
 3. `npm ci`
-4. `npm run build`
-5. `npm test`
+4. `npm test` (which builds with `tsc` first, then runs the suite)
 
-The job is named `build`. Runs on pull requests are cancelled when a newer push arrives; runs on `main` are not.
+When the tests pass and the run comes from a push, a second `docker` job builds the image with Buildx, pushes it to the GitHub Container Registry using `GITHUB_TOKEN` and tags it as `latest` (default branch), a short `sha` tag and a semver tag for `v*` tag pushes. It never runs for pull requests. PR runs are cancelled when a newer push arrives; `main` and tag runs are not.
 
 ## Roadmap
 
@@ -236,7 +251,8 @@ Shipped items are checked.
   - [ ] Read project settings from a config file in other commands
 - [x] **CI for this repository:** build check on every PR
 - [ ] **Phase 2 — Git standardization:** `nad git repair`, `nad git branches`, `nad git protect`
-- [ ] **Phase 3 — Development workflow:** `nad commit`, `nad merge`, PR creation via GitHub CLI, CI gating
+- [x] **Phase 3 — Development workflow (partial):** `nad commit`
+  - [ ] `nad merge`, PR creation via GitHub CLI, CI gating
 - [ ] **Phase 4 — CI/CD:** reusable workflows, GHCR publishing, automatic tagging
 - [ ] **Phase 5 — Staging:** isolated environments, subdomains, database cloning, health checks
 - [ ] **Phase 6 — Release management:** `nad release`, `nad rollback`, release history
