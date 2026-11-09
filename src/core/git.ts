@@ -6,6 +6,10 @@ import {
   GitCommandError,
   GitNotFoundError,
   BaseBranchNotFoundError,
+  ProtectedBranchError,
+  DetachedHeadError,
+  EmptyMessageError,
+  NothingToCommitError
 } from './errors.js';
 
 export async function git(args: string[]): Promise<string> {
@@ -82,4 +86,17 @@ export async function startFeatureBranch(name: string, base = 'main'): Promise<s
 
   await git(['checkout', '-b', branch]);
   return branch;
+}
+
+export async function commitAll(message: string): Promise<string> {
+  if (!(await isGitRepo())) throw new NotAGitRepoError();
+  if (message.trim() === '') throw new EmptyMessageError();
+  const branch = await currentBranch();
+  // git branch --show-current prints '' on detached HEAD
+  if (branch === '') throw new DetachedHeadError();
+  if (branch === 'main') throw new ProtectedBranchError();
+  if (await isClean()) throw new NothingToCommitError();
+  await git(['add', '-A']);
+  await git(['commit', '-m', message]);
+  return await git(['rev-parse', '--short', 'HEAD'])
 }
