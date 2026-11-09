@@ -98,5 +98,5 @@ export async function commitAll(message: string): Promise<string> {
   if (await isClean()) throw new NothingToCommitError();
   await git(['add', '-A']);
   await git(['commit', '-m', message]);
-  return await git(['rev-parse', '--short', 'HEAD'])
+  return await git(['rev-parse', '--short', 'HEAD']);
 }
