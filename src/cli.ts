@@ -6,6 +6,7 @@ import { featCommand } from './commands/feat.js';
 import { initCommand } from './commands/init.js';
 import { inspectCommand } from './commands/inspect.js';
 import {commitCommand} from './commands/commit.js';
+import { prCommand } from './commands/pr.js';
 import { handleError } from './core/errors.js';
 
 const program = new Command();
@@ -17,6 +18,7 @@ program.addCommand(featCommand);
 program.addCommand(initCommand);
 program.addCommand(inspectCommand);
 program.addCommand(commitCommand);
+program.addCommand(prCommand);
 
 // exitOverride is not inherited: apply to every command, and silence
 // commander's own output so handleError renders it consistently.

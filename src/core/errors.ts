@@ -47,6 +47,24 @@ export class EmptyMessageError extends NadError {
   }
 }
 
+export class NoCommitsToPrError extends NadError {
+  constructor() {
+    super('No commits ahead of main yet.', 'Commit first: nad commit "<message>".');
+  }
+}
+
+export class GhNotFoundError extends NadError {
+  constructor() {
+    super('GitHub CLI (gh) was not found.', 'Install it: https://cli.github.com');
+  }
+}
+
+export class GhNotAuthenticatedError extends NadError {
+  constructor() {
+    super('You are not logged in to the GitHub CLI.', 'Run: gh auth login');
+  }
+}
+
 export class BranchExistsError extends NadError {
   constructor(branch: string) {
     super(
