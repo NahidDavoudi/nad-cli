@@ -57,7 +57,7 @@ async function branchExists(branch: string): Promise<boolean> {
   return refExists(`refs/heads/${branch}`);
 }
 
-async function hasUpstream(): Promise<boolean> {
+export async function hasUpstream(): Promise<boolean> {
   try {
     await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
     return true;
