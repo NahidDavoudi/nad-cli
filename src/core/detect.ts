@@ -22,8 +22,8 @@ export interface Detection {
     hasRequirements: boolean;
     /** `ext-*` entries from composer.json `require` (without the `ext-` prefix). */
     phpExtensions: string[];
-    /** Whether package.json defines these scripts (the Dockerfiles call them). */
-    scripts: { build: boolean; start: boolean };
+    /** Whether package.json defines these scripts (Dockerfiles and ci.yml call them). */
+    scripts: { build: boolean; start: boolean; lint: boolean; test: boolean };
   };
 }
 
@@ -130,7 +130,12 @@ export function detectProject(dir: string): Detection {
       packageManager,
       hasRequirements: Boolean(requirements),
       phpExtensions: composer ? readComposerExtensions(dir) : [],
-      scripts: { build: Boolean(pkg?.scripts?.build), start: Boolean(pkg?.scripts?.start) },
+      scripts: {
+        build: Boolean(pkg?.scripts?.build),
+        start: Boolean(pkg?.scripts?.start),
+        lint: Boolean(pkg?.scripts?.lint),
+        test: Boolean(pkg?.scripts?.test),
+      },
     },
   };
 }

@@ -17,7 +17,7 @@ function context(type: ProjectType) {
       packageManager: 'npm' as const,
       hasRequirements: true,
       phpExtensions: [],
-      scripts: { build: true, start: true },
+      scripts: { build: true, start: true, lint: true, test: true },
     },
   };
 }
@@ -50,4 +50,63 @@ test('compose joins the external "proxy" network, php also "db_net"', () => {
   const php = renderTemplate(context('php'))['docker-compose.yml'] ?? '';
   assert.match(php, /networks: \[proxy, db_net\]/);
   assert.match(php, /  db_net:\n    external: true/);
+});
+
+test('ci: parts {docker: false, ci: true} writes only the workflow and project yml', () => {
+  const files = renderTemplate({ ...context('node'), parts: { docker: false, ci: true } });
+  assert.deepEqual(Object.keys(files).sort(), ['.github/workflows/ci.yml', 'nad.project.yml']);
+});
+
+test('ci: default writes docker files but no workflow, docker ignored', () => {
+  const files = renderTemplate(context('node'));
+  assert.ok(!('.github/workflows/ci.yml' in files));
+  assert.ok('Dockerfile' in files);
+});
+
+test('ci: workflow gets the docker job only with docker parts or an existing Dockerfile', () => {
+  const workflow = (files: ReturnType<typeof renderTemplate>) => files['.github/workflows/ci.yml'] ?? '';
+  const withParts = renderTemplate({ ...context('node'), parts: { docker: true, ci: true } });
+  assert.match(workflow(withParts), /^  docker:$/m);
+  assert.match(workflow(withParts), /needs: test/);
+
+  const existingFile = renderTemplate({
+    ...context('node'),
+    parts: { docker: false, ci: true },
+    hasDockerfile: true,
+  });
+  assert.match(workflow(existingFile), /^  docker:$/m);
+
+  const ciOnly = renderTemplate({ ...context('node'), parts: { docker: false, ci: true } });
+  assert.doesNotMatch(workflow(ciOnly), /^  docker:$/m);
+});
+
+test('ci: node/next test steps follow the npm facts', () => {
+  const steps = (scripts: { build: boolean; start: boolean; lint: boolean; test: boolean }, lock: boolean) =>
+    renderTemplate({
+      ...context('node'),
+      parts: { docker: false, ci: true },
+      facts: { ...context('node').facts, scripts, hasPackageLock: lock },
+    })['.github/workflows/ci.yml'] ?? '';
+
+  const full = steps({ build: true, start: false, lint: true, test: true }, true);
+  assert.match(full, /npm ci/);
+  assert.match(full, /npm run lint/);
+  assert.match(full, /npm test/);
+  assert.match(full, /npm run build/);
+  assert.match(full, /cache: npm/);
+
+  const bare = steps({ build: false, start: false, lint: false, test: false }, false);
+  assert.match(bare, /npm install/);
+  assert.doesNotMatch(bare, /npm run lint|npm test|npm run build|cache: npm/);
+});
+
+test('ci: php uses composer + php -l, python compileall, static checks index.html', () => {
+  const wf = (type: ProjectType) =>
+    (renderTemplate({ ...context(type), parts: { docker: false, ci: true } })['.github/workflows/ci.yml'] ?? '');
+  assert.match(wf('php'), /setup-php@v2/);
+  assert.match(wf('php'), /composer install --no-interaction --prefer-dist/);
+  assert.match(wf('php'), /php -l/);
+  assert.match(wf('python'), /pip install -r requirements\.txt/);
+  assert.match(wf('python'), /python -m compileall -q \./);
+  assert.match(wf('static'), /test -f index\.html/);
 });

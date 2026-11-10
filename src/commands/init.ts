@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
-import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug } from '../core/templates.js';
+import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug, type Parts } from '../core/templates.js';
 import { applyFiles, planFiles, type OpAction } from '../core/scaffold.js';
 import { ui } from '../core/ui.js';
 
@@ -34,17 +34,25 @@ function githubRepo(dir: string): string | null {
 interface InitOptions {
   template?: string;
   name?: string;
+  docker?: boolean;
+  ci?: boolean;
   dryRun?: boolean;
   force?: boolean;
 }
 
 export const initCommand = new Command('init')
-  .description('Generate Dockerfile, compose file and nad.project.yml for this project')
+  .description('Generate Docker files and/or a CI workflow, plus nad.project.yml')
   .option('-t, --template <type>', `Project type (${PROJECT_TYPES.join(' | ')}); auto-detected if omitted`)
   .option('-n, --name <name>', 'Container / image name (default: folder name)')
+  .option('--docker', 'Generate only the Docker files')
+  .option('--ci', 'Generate only .github/workflows/ci.yml')
   .option('--dry-run', 'Show what would be written without writing anything')
   .option('--force', 'Overwrite files that differ (originals are backed up to .nad/backup/)')
   .action((options: InitOptions) => {
+    const parts: Parts =
+      options.docker || options.ci
+        ? { docker: Boolean(options.docker), ci: Boolean(options.ci) }
+        : { docker: true, ci: true };
     const dir = resolve(process.cwd());
     const detection = detectProject(dir);
 
@@ -70,26 +78,28 @@ export const initCommand = new Command('init')
       );
     }
 
-    if (type === 'next' && detection.facts.nextStandalone === false) {
-      ui.warn(`next.config has no ${ui.code("output: 'standalone'")} — the generated Dockerfile needs it.`);
-    }
-    if (type === 'next' && detection.facts.packageManager && detection.facts.packageManager !== 'npm') {
-      ui.warn(`Found a ${detection.facts.packageManager} lockfile; the template installs with npm.`);
-    }
+    if (parts.docker) {
+      if (type === 'next' && detection.facts.nextStandalone === false) {
+        ui.warn(`next.config has no ${ui.code("output: 'standalone'")} — the generated Dockerfile needs it.`);
+      }
+      if (type === 'next' && detection.facts.packageManager && detection.facts.packageManager !== 'npm') {
+        ui.warn(`Found a ${detection.facts.packageManager} lockfile; the template installs with npm.`);
+      }
 
-    const missingExts = detection.facts.phpExtensions.filter((e) => !PHP_PROVIDED_EXTENSIONS.has(e));
-    if (type === 'php' && missingExts.length > 0) {
-      ui.warn(`composer.json requires ext-${missingExts.join(', ext-')}, which the generated Dockerfile does not install.`);
-    }
-    if (type === 'next' && !detection.facts.scripts.build) {
-      ui.warn(`package.json has no "build" script; the Dockerfile runs ${ui.code('npm run build')}.`);
-    }
-    if (type === 'node' && !detection.facts.scripts.start) {
-      ui.warn(`package.json has no "start" script; the container runs ${ui.code('npm start')}.`);
-    }
-    if (type === 'php' && !existsSync(join(dir, '.env'))) {
-      ui.warn('The compose file bind-mounts ./.env; if the file does not exist, Docker creates a directory named .env instead.');
-      ui.hint(`Create ${ui.code('.env')} before the first docker compose up.`);
+      const missingExts = detection.facts.phpExtensions.filter((e) => !PHP_PROVIDED_EXTENSIONS.has(e));
+      if (type === 'php' && missingExts.length > 0) {
+        ui.warn(`composer.json requires ext-${missingExts.join(', ext-')}, which the generated Dockerfile does not install.`);
+      }
+      if (type === 'next' && !detection.facts.scripts.build) {
+        ui.warn(`package.json has no "build" script; the Dockerfile runs ${ui.code('npm run build')}.`);
+      }
+      if (type === 'node' && !detection.facts.scripts.start) {
+        ui.warn(`package.json has no "start" script; the container runs ${ui.code('npm start')}.`);
+      }
+      if (type === 'php' && !existsSync(join(dir, '.env'))) {
+        ui.warn('The compose file bind-mounts ./.env; if the file does not exist, Docker creates a directory named .env instead.');
+        ui.hint(`Create ${ui.code('.env')} before the first docker compose up.`);
+      }
     }
 
     const name = options.name ?? basename(dir);
@@ -98,6 +108,8 @@ export const initCommand = new Command('init')
       type,
       imageRepo: githubRepo(dir) ?? `nahiddavoudi/${slug(name)}`,
       facts: detection.facts,
+      parts,
+      hasDockerfile: existsSync(join(dir, 'Dockerfile')),
     });
     const ops = planFiles(dir, files, Boolean(options.force));
 
@@ -116,7 +128,9 @@ export const initCommand = new Command('init')
     } else {
       const backup = applyFiles(dir, ops);
       ui.success(`Wrote ${changes.length} file(s).`);
-      ui.hint(`First time on this machine: ${ui.code('docker network create proxy')}${type === 'php' ? ' && docker network create db_net' : ''}`);
+      if (parts.docker) {
+        ui.hint(`First time on this machine: ${ui.code('docker network create proxy')}${type === 'php' ? ' && docker network create db_net' : ''}`);
+      }
       if (backup) {
         ui.info(`Originals backed up to ${ui.code(backup)}`);
         const gitignore = join(dir, '.gitignore');
