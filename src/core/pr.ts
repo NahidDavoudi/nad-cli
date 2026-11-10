@@ -35,6 +35,8 @@ export async function createPullRequest(
     createPr: (...args: [string, string, string, string]) => createPr(...args),
     waitForChecks: (branch: string) => waitForChecks(branch),
     mergePr: (branch: string) => mergePr(branch),
+    ghAvailable: () => ghAvailable(),
+    ghAuthenticated: () => ghAuthenticated(),
   },
 ): Promise<string> {
   if (!(await isGitRepo())) throw new NotAGitRepoError();
@@ -46,8 +48,8 @@ export async function createPullRequest(
     .split('\n')
     .filter(Boolean);
   if (commitMessages.length === 0) throw new NoCommitsToPrError();
-  await ghAvailable();
-  await ghAuthenticated();
+  await gh.ghAvailable();
+  await gh.ghAuthenticated();
 
   // Always push: a no-op if up to date, and it also sends fix commits after a failed CI run.
   await step('Pushing branch', () => git(['push', '-u', 'origin', branch]));

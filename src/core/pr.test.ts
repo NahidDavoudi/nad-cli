@@ -81,6 +81,8 @@ interface PrDeps {
   createPr: (branch: string, title: string, body: string, base: string) => Promise<string>;
   waitForChecks: (branch: string) => Promise<void>;
   mergePr: (branch: string) => Promise<void>;
+  ghAvailable: () => Promise<void>;
+  ghAuthenticated: () => Promise<void>;
 }
 
 /** Repo on feature/x with one commit ahead of main, pushed to a local bare origin. */
@@ -101,6 +103,8 @@ function repoWithRemote(): string {
 
 function fakeDeps(calls: string[], url: string): PrDeps {
   return {
+    ghAvailable: async () => {},
+    ghAuthenticated: async () => {},
     findOpenPr: async (branch) => {
       calls.push(`findOpenPr:${branch}`);
       return url;
