@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { GhNotAuthenticatedError, GhNotFoundError, NadError } from './errors.js';
+import { ChecksFailedError, GhNotAuthenticatedError, GhNotFoundError, NadError } from './errors.js';
 
 export async function gh(args: string[]): Promise<string> {
   try {
@@ -36,16 +36,57 @@ export async function ghAuthenticated(): Promise<void> {
   }
 }
 
-export async function findOpenPr(branch: string): Promise<string | null> {
-  const stdout = await gh(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'url']);
+export async function findOpenPr(branch: string, run: (args: string[]) => Promise<string> = gh): Promise<string | null> {
+  const stdout = await run(['pr', 'list', '--head', branch, '--state', 'open', '--json', 'url']);
   const prs = JSON.parse(stdout) as Array<{ url?: string }>;
   return prs[0]?.url ?? null;
 }
 
-export async function createPr(branch: string, title: string, body: string, base: string): Promise<string> {
-  await gh(['pr', 'create', '--head', branch, '--title', title, '--body', body, '--base', base]);
+export async function createPr(
+  branch: string,
+  title: string,
+  body: string,
+  base: string,
+  run: (args: string[]) => Promise<string> = gh,
+): Promise<string> {
+  await run(['pr', 'create', '--head', branch, '--title', title, '--body', body, '--base', base]);
   // gh prints the new PR URL on stdout; take the first https link.
   // gh pr create fails on anything ambiguous, so read the URL back to stay simple.
-  const url = await findOpenPr(branch);
-  return url ?? '';
+  const url = await findOpenPr(branch, run);
+  if (!url) throw new NadError('PR was created but its URL could not be found.', 'Check `gh pr list`.');
+  return url;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function waitForChecks(
+  branch: string,
+  run: (args: string[]) => Promise<unknown> = gh,
+  delay = 5000,
+): Promise<void> {
+  const attempts = 3;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await run(['pr', 'checks', branch, '--watch', '--fail-fast']);
+      return;
+    } catch (error) {
+      if (error instanceof GhNotFoundError) throw error;
+      const err = error as { stderr?: string; stdout?: string; message?: string };
+      const text = `${err.message ?? ''}${err.stderr ?? ''}${err.stdout ?? ''}`;
+      if (/no checks reported/i.test(text)) {
+        // Right after PR creation, CI may not have registered yet: retry briefly.
+        // If it is still empty after the retries, the repo has no CI: continue.
+        if (i < attempts - 1) await sleep(delay);
+        continue;
+      }
+      throw new ChecksFailedError();
+    }
+  }
+}
+
+export async function mergePr(
+  branch: string,
+  run: (args: string[]) => Promise<string> = gh,
+): Promise<void> {
+  await run(['pr', 'merge', branch, '--squash', '--delete-branch']);
 }

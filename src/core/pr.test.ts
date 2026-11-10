@@ -75,3 +75,86 @@ test('branch with no commits ahead of main', async () => {
   git(['checkout', '-qb', 'feature/x']);
   await assert.rejects(() => createPullRequest('t'), NoCommitsToPrError);
 });
+
+interface PrDeps {
+  findOpenPr: (branch: string) => Promise<string | null>;
+  createPr: (branch: string, title: string, body: string, base: string) => Promise<string>;
+  waitForChecks: (branch: string) => Promise<void>;
+  mergePr: (branch: string) => Promise<void>;
+  ghAvailable: () => Promise<void>;
+  ghAuthenticated: () => Promise<void>;
+}
+
+/** Repo on feature/x with one commit ahead of main, pushed to a local bare origin. */
+function repoWithRemote(): string {
+  repo(false);
+  git(['checkout', '-qb', 'feature/x']);
+  writeFileSync(join(process.cwd(), 'f.txt'), 'feat\n');
+  git(['add', '-A']);
+  git(['commit', '-qm', 'feat: x']);
+  const remote = mkdtempSync(join(tmpdir(), 'nad-pr-remote-'));
+  roots.push(remote);
+  execFileSync('git', ['init', '-q', '--bare', remote], { stdio: 'pipe' });
+  git(['remote', 'add', 'origin', remote]);
+  git(['push', '-q', '-u', 'origin', 'main']);
+  git(['push', '-u', 'origin', 'feature/x']);
+  return remote;
+}
+
+function fakeDeps(calls: string[], url: string): PrDeps {
+  return {
+    ghAvailable: async () => {},
+    ghAuthenticated: async () => {},
+    findOpenPr: async (branch) => {
+      calls.push(`findOpenPr:${branch}`);
+      return url;
+    },
+    createPr: async () => {
+      calls.push('createPr');
+      return url;
+    },
+    waitForChecks: async (branch) => {
+      calls.push(`waitForChecks:${branch}`);
+    },
+    mergePr: async (branch) => {
+      calls.push(`mergePr:${branch}`);
+    },
+  };
+}
+
+const URL = 'https://example.com/pr/1';
+
+test('flow: existing PR open → push → wait checks → merge → sync main', async () => {
+  repoWithRemote();
+  const calls: string[] = [];
+  const url = await createPullRequest('t', { merge: true }, fakeDeps(calls, URL));
+  assert.equal(url, URL);
+  assert.deepEqual(calls, [
+    'findOpenPr:feature/x',
+    'waitForChecks:feature/x',
+    'mergePr:feature/x',
+  ]);
+  assert.equal(git(['branch', '--show-current']), 'main');
+});
+
+test('flow: --no-merge skips checks and merge', async () => {
+  repoWithRemote();
+  const calls: string[] = [];
+  const url = await createPullRequest('t', { merge: false }, fakeDeps(calls, URL));
+  assert.equal(url, URL);
+  assert.deepEqual(calls, ['findOpenPr:feature/x']);
+  assert.equal(git(['branch', '--show-current']), 'feature/x');
+});
+
+test('flow: no open PR → createPr is used', async () => {
+  repoWithRemote();
+  const calls: string[] = [];
+  const deps = fakeDeps(calls, URL);
+  deps.findOpenPr = async (branch) => {
+    calls.push(`findOpenPr:${branch}`);
+    return null;
+  };
+  const url = await createPullRequest('t', { merge: false }, deps);
+  assert.equal(url, URL);
+  assert.deepEqual(calls, ['findOpenPr:feature/x', 'createPr']);
+});

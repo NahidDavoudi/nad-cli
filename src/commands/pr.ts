@@ -4,8 +4,11 @@ import { ui } from '../core/ui.js';
 
 export const prCommand = new Command('pr')
   .argument('<title>', 'Pull request title')
-  .description('Open a pull request for the current branch')
-  .action(async (title: string) => {
-    const url = await createPullRequest(title);
-    ui.success(`Pull request ready: ${ui.code(url)}`);
+  .option('--no-merge', 'Only open the PR; skip waiting for CI and merging')
+  .description('Open a pull request, wait for CI, merge it, and clean up')
+  .action(async (title: string, opts: { merge: boolean }) => {
+    const url = await createPullRequest(title, { merge: opts.merge });
+    ui.success(
+      opts.merge ? `Merged: ${ui.code(url)}` : `Pull request ready: ${ui.code(url)}`,
+    );
   });
