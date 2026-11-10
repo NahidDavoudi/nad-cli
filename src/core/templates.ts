@@ -6,6 +6,15 @@ export interface TemplateContext {
   /** `owner/repo` (lowercase) used for the GHCR image name. */
   imageRepo: string;
   facts: Detection['facts'];
+  /** Which file groups to generate. Defaults to docker only (command always passes it). */
+  parts?: Parts;
+  /** ci.yml adds the image build+push job when a Dockerfile is generated or already exists. */
+  hasDockerfile?: boolean;
+}
+
+export interface Parts {
+  docker: boolean;
+  ci: boolean;
 }
 
 /** path (relative, forward slashes) -> file content */
@@ -296,9 +305,112 @@ function projectYml(c: TemplateContext): string {
   );
 }
 
+// ------------------------------------------------------------------------ CI
+
+/** Install + check steps for the `test` job, per project type. */
+function ciTestSteps(c: TemplateContext): string[] {
+  const f = c.facts;
+  switch (c.type) {
+    case 'node':
+    case 'next':
+      return [
+        '      - uses: actions/setup-node@v4',
+        '        with:',
+        '          node-version: 22',
+        ...(f.hasPackageLock ? ['          cache: npm'] : []),
+        `      - run: ${f.hasPackageLock ? 'npm ci' : 'npm install'}`,
+        ...(f.scripts.lint ? ['      - run: npm run lint'] : []),
+        ...(f.scripts.test ? ['      - run: npm test'] : []),
+        ...(f.scripts.build ? ['      - run: npm run build'] : []),
+      ];
+    case 'php':
+      return [
+        '      - uses: shivammathur/setup-php@v2',
+        '        with:',
+        "          php-version: '8.4'",
+        '          tools: composer',
+        ...(f.hasComposer ? ['      - run: composer install --no-interaction --prefer-dist'] : []),
+        '      - name: Lint PHP files',
+        "        run: find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l",
+      ];
+    case 'python':
+      return [
+        '      - uses: actions/setup-python@v5',
+        '        with:',
+        "          python-version: '3.12'",
+        f.hasRequirements ? '      - run: pip install -r requirements.txt' : '      - run: pip install .',
+        '      - run: python -m compileall -q .',
+      ];
+    case 'static':
+      return ['      - run: test -f index.html'];
+  }
+}
+
+const CI_DOCKER_JOB: string[] = [
+  '  docker:',
+  '    needs: test',
+  "    if: github.event_name == 'push'",
+  '    runs-on: ubuntu-latest',
+  '    permissions:',
+  '      contents: read',
+  '      packages: write',
+  '    steps:',
+  '      - uses: actions/checkout@v4',
+  '      - uses: docker/setup-buildx-action@v3',
+  '      - uses: docker/login-action@v3',
+  '        with:',
+  '          registry: ghcr.io',
+  '          username: ${{ github.actor }}',
+  '          password: ${{ secrets.GITHUB_TOKEN }}',
+  '      - uses: docker/metadata-action@v5',
+  '        id: meta',
+  '        with:',
+  '          images: ghcr.io/${{ github.repository }}',
+  '          tags: |',
+  '            type=raw,value=latest,enable={{is_default_branch}}',
+  '            type=sha',
+  '            type=semver,pattern={{version}}',
+  '      - uses: docker/build-push-action@v6',
+  '        with:',
+  '          context: .',
+  '          push: true',
+  '          tags: ${{ steps.meta.outputs.tags }}',
+  '          labels: ${{ steps.meta.outputs.labels }}',
+  '          cache-from: type=gha',
+  '          cache-to: type=gha,mode=max',
+];
+
+function ciWorkflow(c: TemplateContext): string {
+  const withDocker = Boolean(c.parts?.docker || c.hasDockerfile);
+  return lines(
+    'name: CI',
+    '',
+    'on:',
+    '  push:',
+    '    branches: [main]',
+    withDocker && '    tags: ["v*"]',
+    '  pull_request:',
+    '',
+    'permissions:',
+    '  contents: read',
+    '',
+    'concurrency:',
+    '  group: ci-${{ github.ref }}',
+    "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+    '',
+    'jobs:',
+    '  test:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    ...ciTestSteps(c),
+    ...(withDocker ? ['', ...CI_DOCKER_JOB] : []),
+  );
+}
+
 // -------------------------------------------------------------------- Public
 
-export function renderTemplate(c: TemplateContext): FileMap {
+function dockerFiles(c: TemplateContext): FileMap {
   const dockerfile = {
     php: phpDockerfile,
     next: nextDockerfile,
@@ -315,6 +427,14 @@ export function renderTemplate(c: TemplateContext): FileMap {
     'docker-compose.yml': compose(c),
     ...(env ? { '.env.example': env } : {}),
     ...(c.type === 'php' ? PHP_SUPPORT : {}),
+  };
+}
+
+export function renderTemplate(c: TemplateContext): FileMap {
+  const parts = c.parts ?? { docker: true, ci: false };
+  return {
+    ...(parts.docker ? dockerFiles(c) : {}),
+    ...(parts.ci ? { '.github/workflows/ci.yml': ciWorkflow(c) } : {}),
     'nad.project.yml': projectYml(c),
   };
 }
