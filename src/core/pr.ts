@@ -5,8 +5,16 @@ import {
   NoCommitsToPrError,
   ProtectedBranchError
 } from './errors.js';
-import { currentBranch, git, hasUpstream, isClean, isGitRepo } from './git.js';
-import { createPr, findOpenPr, ghAuthenticated, ghAvailable } from './github.js';
+import { currentBranch, git, isClean, isGitRepo } from './git.js';
+import {
+  createPr,
+  findOpenPr,
+  ghAuthenticated,
+  ghAvailable,
+  mergePr,
+  waitForChecks
+} from './github.js';
+import { step } from './ui.js';
 
 const PROTECTED_BASE = 'main';
 
@@ -15,7 +23,20 @@ export function buildPrBody(commitMessages: string[]): string {
   return commitMessages.map((message) => `- ${message}`).join('\n') + '\n';
 }
 
-export async function createPullRequest(title: string): Promise<string> {
+export interface PrOptions {
+  merge: boolean;
+}
+
+export async function createPullRequest(
+  title: string,
+  options: PrOptions = { merge: true },
+  gh = {
+    findOpenPr: (branch: string) => findOpenPr(branch),
+    createPr: (...args: [string, string, string, string]) => createPr(...args),
+    waitForChecks: (branch: string) => waitForChecks(branch),
+    mergePr: (branch: string) => mergePr(branch),
+  },
+): Promise<string> {
   if (!(await isGitRepo())) throw new NotAGitRepoError();
   const branch = await currentBranch();
   if (branch === '') throw new DetachedHeadError();
@@ -27,10 +48,23 @@ export async function createPullRequest(title: string): Promise<string> {
   if (commitMessages.length === 0) throw new NoCommitsToPrError();
   await ghAvailable();
   await ghAuthenticated();
-  const existing = await findOpenPr(branch);
-  if (existing) return existing; // already open: idempotent no-op
-  if (!(await hasUpstream())) {
-    await git(['push', '-u', 'origin', branch]);
-  }
-  return await createPr(branch, title, buildPrBody(commitMessages), PROTECTED_BASE);
+
+  // Always push: a no-op if up to date, and it also sends fix commits after a failed CI run.
+  await step('Pushing branch', () => git(['push', '-u', 'origin', branch]));
+
+  const url = await step('Opening pull request', async () =>
+    (await gh.findOpenPr(branch)) ??
+    (await gh.createPr(branch, title, buildPrBody(commitMessages), PROTECTED_BASE))
+  );
+
+  if (!options.merge) return url;
+
+  await step('Waiting for CI checks', () => gh.waitForChecks(branch));
+  await step('Merging (squash)', () => gh.mergePr(branch));
+  await step('Syncing local main', async () => {
+    await git(['switch', PROTECTED_BASE]);
+    await git(['pull', '--ff-only']);
+  });
+
+  return url;
 }

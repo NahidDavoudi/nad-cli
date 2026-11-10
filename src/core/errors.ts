@@ -53,6 +53,12 @@ export class NoCommitsToPrError extends NadError {
   }
 }
 
+export class ChecksFailedError extends NadError {
+  constructor() {
+    super('CI checks failed.', 'Run `gh pr checks` for details, fix, commit, then run `nad pr` again.');
+  }
+}
+
 export class GhNotFoundError extends NadError {
   constructor() {
     super('GitHub CLI (gh) was not found.', 'Install it: https://cli.github.com');
