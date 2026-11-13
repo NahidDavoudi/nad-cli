@@ -9,7 +9,7 @@ The command-line interface for the **Nad Platform**: one standard workflow for d
 
 `nad` is the entry point developers (and AI agents) use to prepare a repository for containers, start feature branches and, in later phases, drive CI/CD, staging and production releases.
 
-> **Status:** early development (`0.0.1`). Seven commands are implemented (`hi`, `git status`, `feat`, `commit`, `pr`, `init`, `inspect`). The rest are on the [roadmap](#roadmap).
+> **Status:** early development (`0.0.1`). The `hi`, `git status`, `git repair`, `feat`, `commit`, `pr`, `init` and `inspect` commands are implemented. The rest are on the [roadmap](#roadmap).
 
 ---
 
@@ -79,6 +79,24 @@ $ nad hi Ada
 ### `nad git status`
 
 Prints `git status --porcelain=v1 --branch` for the current repository. Fails with a clear message outside a Git repository.
+
+### `nad git repair detect`
+
+Read-only scan (works on any branch, dirty tree allowed) that reports two groups of tracked files:
+
+- **Ignored but tracked:** files matching `.gitignore` (`git ls-files -ci --exclude-standard`), grouped by top-level directory.
+- **Known-bad even when not ignored:** `node_modules`, `vendor`, `uploads`, `storage`, `dist`, `build`, `.next`, `__pycache__`, and secrets-like files (`.env`, `.env.*`, `*.pem`, `id_rsa*`; `.env.example` is exempt), grouped the same way.
+
+If `vendor/` is tracked and no `Dockerfile` contains `composer install`, you also get a warning that vendor may be committed on purpose. The report always exits `0`; when anything is found it prints the exact command to fix it.
+
+### `nad git repair untrack <path...> [--apply]`
+
+Removes paths from the git index (files stay on disk) and adds them to `.gitignore`. All checks run before anything is changed: git repository, not on `main`, attached HEAD, clean working tree.
+
+- **Default is a dry run:** prints file count and total size per path, changes nothing, and tells you to re-run with `--apply`.
+- **`--apply`:** `git rm -r --cached` each tracked path, appends the missing lines to `.gitignore` (created if missing, never duplicated — idempotent). For `uploads`/`storage` an empty `.gitkeep` is created and force-added so the directory survives in git. Nothing is committed; run `nad commit "<message>"` next.
+- Paths that are not tracked are ignored; if none are tracked the command succeeds with "Nothing to untrack".
+- **Warnings printed after `--apply`:** untracking only affects future commits (files stay in old history, the repo does not shrink, and any secret ever committed must be considered leaked and rotated), and anyone who `git pull`s after you commit will have those files deleted from their working directory — back up `uploads`/`storage` on servers first.
 
 ### `nad feat <name> [--base <branch>]`
 
@@ -205,6 +223,7 @@ src/
     ├── git.ts          # Git primitives and startFeatureBranch()
     ├── github.ts       # gh CLI primitives (available/auth/list/create)
     ├── pr.ts           # createPullRequest(): guards, push, body
+    ├── repair.ts       # git repair: detect grouping + untrack
     ├── detect.ts       # project-type detection (reads files only)
     ├── templates.ts    # renders Dockerfile / compose / support files
     ├── scaffold.ts     # plans and applies file writes, with backups
@@ -244,6 +263,7 @@ npm test      # builds, then runs the test suite (node:test) against dist/
 The suites live next to the code as `src/**/*.test.ts` and cover:
 
 - `git.ts` — `commitAll` on real temp repositories: not-a-repo, empty message, clean tree, the protected `main` branch and detached HEAD each throw their own error, and a real commit on a feature branch stages everything and returns the short hash.
+- `repair.ts` — the pure grouping helpers (ignored vs known-bad, `.env.example` exempt, secrets-like files flagged), `detectRepairIssues` on a real temp repo, and `untrack`: dry run changes nothing, `--apply` untracks while keeping files on disk and updates `.gitignore` idempotently, blocked on `main` / dirty tree / detached HEAD, and `uploads` gets a tracked `.gitkeep`.
 - `pr.ts` — `createPullRequest` guards (not-a-repo, protected `main`, dirty tree, detached HEAD, no commits ahead) and `buildPrBody` bullet formatting, without touching `gh`.
 - `detect.ts` — every project type, the empty folder, priority order, and `node` suppression when `php` already matched (a `package.json` alone no longer makes it an extra candidate).
 - `scaffold.ts` — create / unchanged / skip / overwrite decisions (on temp folders), and that overwrites back up the original to `.nad/backup/`.
@@ -258,7 +278,7 @@ The suites live next to the code as `src/**/*.test.ts` and cover:
 3. `npm ci`
 4. `npm test` (which builds with `tsc` first, then runs the suite)
 
-When the tests pass and the run comes from a push, a second `docker` job builds the image with Buildx, pushes it to the GitHub Container Registry using `GITHUB_TOKEN` and tags it as `latest` (default branch), a short `sha` tag and a semver tag for `v*` tag pushes. It never runs for pull requests. PR runs are cancelled when a newer push arrives; `main` and tag runs are not.
+When the tests pass and the run comes from a push, a second `docker` job builds the image with Buildx, pushes it to the GitHub Container Registry using `GITHUB_TOKEN` and tags it as `latest` (default branch) plus a semver tag for `v*` tag pushes. It never runs for pull requests. PR runs are cancelled when a newer push arrives; `main` and tag runs are not.
 
 ## Roadmap
 
@@ -270,7 +290,8 @@ Shipped items are checked.
   - [ ] Generate GitHub Actions workflows from `init`
   - [ ] Read project settings from a config file in other commands
 - [x] **CI for this repository:** build check on every PR
-- [ ] **Phase 2 — Git standardization:** `nad git repair`, `nad git branches`, `nad git protect`
+- [ ] **Phase 2 — Git standardization (partial):** `nad git repair` (detect + untrack)
+  - [ ] `nad git branches`, `nad git protect`
 - [x] **Phase 3 — Development workflow (partial):** `nad commit`, `nad pr` (GitHub CLI, idempotent, auto-push)
   - [ ] `nad merge`, CI gating
 - [ ] **Phase 4 — CI/CD:** reusable workflows, GHCR publishing, automatic tagging
