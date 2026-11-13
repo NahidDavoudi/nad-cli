@@ -62,6 +62,12 @@ export class ChecksFailedError extends NadError {
   }
 }
 
+export class NoPathsGivenError extends NadError {
+  constructor() {
+    super('No paths given.', 'Pass at least one path: nad git repair untrack <path...>');
+  }
+}
+
 export class ChecksNotReportedError extends NadError {
   constructor(branch: string) {
     super(
