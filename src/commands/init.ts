@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { NadError } from '../core/errors.js';
+import { PHP_DEFAULT_DATA, loadConfig, type DataMount } from '../core/config.js';
 import { PROJECT_TYPES, detectProject, type ProjectType } from '../core/detect.js';
 import { PHP_PROVIDED_EXTENSIONS, renderTemplate, slug, type Parts } from '../core/templates.js';
 import { applyFiles, planFiles, type OpAction } from '../core/scaffold.js';
@@ -48,7 +49,7 @@ export const initCommand = new Command('init')
   .option('--ci', 'Generate only .github/workflows/ci.yml')
   .option('--dry-run', 'Show what would be written without writing anything')
   .option('--force', 'Overwrite files that differ (originals are backed up to .nad/backup/)')
-  .action((options: InitOptions) => {
+  .action(async (options: InitOptions) => {
     const parts: Parts =
       options.docker || options.ci
         ? { docker: Boolean(options.docker), ci: Boolean(options.ci) }
@@ -102,12 +103,28 @@ export const initCommand = new Command('init')
       }
     }
 
+    // PHP compose volumes come from the config's data list (or the defaults).
+    const existing = await loadConfig(dir);
+    let data: DataMount[] | undefined;
+    let dataIsDefault = false;
+    if (type === 'php') {
+      if (existing?.data) data = existing.data;
+      else {
+        data = PHP_DEFAULT_DATA;
+        dataIsDefault = existing !== null;
+      }
+    }
+    if (dataIsDefault) {
+      ui.warn('nad.project.yml has no data list — using the default data paths, they are defaults, not detected.');
+    }
+
     const name = options.name ?? basename(dir);
     const files = renderTemplate({
       name,
       type,
       imageRepo: githubRepo(dir) ?? `nahiddavoudi/${slug(name)}`,
       facts: detection.facts,
+      data,
       parts,
       hasDockerfile: existsSync(join(dir, 'Dockerfile')),
     });
@@ -130,6 +147,16 @@ export const initCommand = new Command('init')
       ui.success(`Wrote ${changes.length} file(s).`);
       if (parts.docker) {
         ui.hint(`First time on this machine: ${ui.code('docker network create proxy')}${type === 'php' ? ' && docker network create db_net' : ''}`);
+        if (type === 'php') {
+          // compose creates ./data where it runs; we never edit .gitignore ourselves.
+          const gitignore = join(dir, '.gitignore');
+          const ignoresData =
+            existsSync(gitignore) &&
+            readFileSync(gitignore, 'utf8').split(/\r?\n/).some((line) => /^\s*data\/?\s*$/.test(line));
+          if (!ignoresData) {
+            ui.warn('compose mounts ./data (uploads, logs) — add data/ to .gitignore so it is not committed.');
+          }
+        }
       }
       if (backup) {
         ui.info(`Originals backed up to ${ui.code(backup)}`);
