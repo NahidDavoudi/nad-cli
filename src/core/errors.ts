@@ -68,6 +68,12 @@ export class NoPathsGivenError extends NadError {
   }
 }
 
+export class InvalidPathError extends NadError {
+  constructor(path: string) {
+    super(`Invalid path: ${path}`, 'Use a relative path inside the repository, e.g. uploads/.');
+  }
+}
+
 export class ChecksNotReportedError extends NadError {
   constructor(branch: string) {
     super(
