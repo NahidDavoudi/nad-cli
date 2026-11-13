@@ -3,6 +3,7 @@ import { execa } from 'execa';
 import {
   DetachedHeadError,
   DirtyTreeError,
+  InvalidPathError,
   NoPathsGivenError,
   NotAGitRepoError,
   ProtectedBranchError,
@@ -40,12 +41,12 @@ function isSecretLike(basename: string): boolean {
   return basename.startsWith('id_rsa');
 }
 
-/** Pure: group paths by their top-level directory (root files under '.'). */
+/** Pure: group paths by their top-level directory; root files group under their own name. */
 export function groupByTopDir(paths: string[]): Finding[] {
   const order: string[] = [];
   const counts = new Map<string, number>();
   for (const path of paths) {
-    const dir = path.includes('/') ? path.split('/')[0] : '.';
+    const dir = path.includes('/') ? path.split('/')[0] : path;
     if (!counts.has(dir)) {
       counts.set(dir, 0);
       order.push(dir);
@@ -96,11 +97,17 @@ export interface UntrackItem {
   bytes: number;
 }
 
+export interface GitkeepEntry {
+  path: string;
+  /** true when .gitkeep already existed on disk and was re-added. */
+  restored: boolean;
+}
+
 export interface UntrackResult {
   apply: boolean;
   items: UntrackItem[];
   gitignoreUpdated: boolean;
-  gitkeeps: string[];
+  gitkeeps: GitkeepEntry[];
 }
 
 function sizeOnDisk(path: string): number {
@@ -114,6 +121,19 @@ function sizeOnDisk(path: string): number {
 
 function isDirectory(path: string): boolean {
   return statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+}
+
+/**
+ * Normalize a user path before anything is touched: backslashes to '/',
+ * no leading './', no trailing '/'. Rejects anything that is not a
+ * clean relative path inside the repository.
+ */
+function normalizePath(raw: string): string {
+  const path = raw.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  if (path === '' || path === '.' || path === '..') throw new InvalidPathError(raw);
+  if (/^[a-zA-Z]:/.test(path) || path.startsWith('/')) throw new InvalidPathError(raw);
+  if (path.split('/').some((segment) => segment === '..')) throw new InvalidPathError(raw);
+  return path;
 }
 
 /** `.gitignore` line for a path: `dir/` for directories, the path as-is for files. */
@@ -138,26 +158,29 @@ function ensureGitignoreLines(lines: string[]): boolean {
   return true;
 }
 
-/** Empty .gitkeep in an untracked directory, force-added so the dir survives. */
-async function ensureGitkeep(dir: string): Promise<boolean> {
+/** .gitkeep in an untracked directory, force-added so the dir survives. Only
+ * skips when it is already tracked (an existing-but-untracked keep is restored). */
+async function ensureGitkeep(dir: string): Promise<GitkeepEntry | null> {
   const keep = `${dir}/.gitkeep`;
-  if (existsSync(keep)) return false;
-  writeFileSync(keep, '');
+  if ((await git(['ls-files', '--', keep])).trim() !== '') return null;
+  const restored = existsSync(keep);
+  if (!restored) writeFileSync(keep, '');
   await execa('git', ['add', '-f', keep]);
-  return true;
+  return { path: keep, restored };
 }
 
 export async function untrack(paths: string[], apply: boolean): Promise<UntrackResult> {
-  // All checks run before anything is changed.
+  // All checks and validation run before anything is changed.
+  const normalized = [...new Set(paths.map(normalizePath))];
+  if (normalized.length === 0) throw new NoPathsGivenError();
   if (!(await isGitRepo())) throw new NotAGitRepoError();
-  if (paths.length === 0) throw new NoPathsGivenError();
   const branch = await currentBranch();
   if (branch === '') throw new DetachedHeadError();
   if (branch === 'main') throw new ProtectedBranchError();
   if (!(await isClean())) throw new DirtyTreeError();
 
   const items: UntrackItem[] = [];
-  for (const path of paths) {
+  for (const path of normalized) {
     const listed = (await git(['ls-files', '--', path])).split('\n').filter(Boolean);
     if (listed.length === 0) continue;
     items.push({ path, files: listed.length, bytes: sizeOnDisk(path) });
@@ -170,12 +193,13 @@ export async function untrack(paths: string[], apply: boolean): Promise<UntrackR
   }
   const gitignoreUpdated = ensureGitignoreLines(items.map((item) => ignoreLineFor(item.path)));
 
-  const gitkeeps: string[] = [];
+  const gitkeeps: GitkeepEntry[] = [];
   for (const { path } of items) {
     // Only runtime data directories need to survive as empty folders.
     const base = path.split('/').pop() ?? path;
     if ((base === 'uploads' || base === 'storage') && isDirectory(path)) {
-      if (await ensureGitkeep(path)) gitkeeps.push(`${path}/.gitkeep`);
+      const keep = await ensureGitkeep(path);
+      if (keep) gitkeeps.push(keep);
     }
   }
   return { apply: true, items, gitignoreUpdated, gitkeeps };

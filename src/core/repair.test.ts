@@ -4,7 +4,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { DetachedHeadError, DirtyTreeError, NotAGitRepoError, ProtectedBranchError } from './errors.js';
+import {
+  DetachedHeadError,
+  DirtyTreeError,
+  InvalidPathError,
+  NotAGitRepoError,
+  ProtectedBranchError,
+} from './errors.js';
 import { detectRepairIssues, findKnownBad, groupByTopDir, untrack } from './repair.js';
 
 const roots: string[] = [];
@@ -59,13 +65,13 @@ function mkdirAndWrite(dir: string, name: string, content: string): void {
 
 // ----------------------------------------------------------------- pure tests
 
-test('groupByTopDir: counts per top-level directory, root files under "."', () => {
+test('groupByTopDir: counts per top-level directory, root files by their own name', () => {
   const groups = groupByTopDir(['node_modules/a.js', 'node_modules/b.js', 'vendor/x.php', 'src/i.ts', 'root.txt']);
   assert.deepEqual(groups, [
     { dir: 'node_modules', count: 2 },
     { dir: 'vendor', count: 1 },
     { dir: 'src', count: 1 },
-    { dir: '.', count: 1 },
+    { dir: 'root.txt', count: 1 },
   ]);
 });
 
@@ -85,8 +91,11 @@ test('findKnownBad: known-bad directories and secrets-like files, .env.example e
   assert.deepEqual(findKnownBad(paths), [
     { dir: 'node_modules', count: 2 },
     { dir: 'vendor', count: 1 },
-    { dir: '.', count: 4 },
+    { dir: '.env', count: 1 },
+    { dir: '.env.prod', count: 1 },
     { dir: 'certs', count: 1 },
+    { dir: 'id_rsa', count: 1 },
+    { dir: 'id_rsa.pub', count: 1 },
   ]);
 });
 
@@ -103,7 +112,7 @@ test('detect: ignored-but-tracked, known-bad and vendor warning on a temp repo',
   const result = await detectRepairIssues();
   assert.deepEqual(result.ignored, [{ dir: 'node_modules', count: 1 }]);
   assert.deepEqual(result.knownBad, [
-    { dir: '.', count: 1 },
+    { dir: '.env', count: 1 },
     { dir: 'node_modules', count: 1 },
     { dir: 'vendor', count: 1 },
   ]);
@@ -112,6 +121,15 @@ test('detect: ignored-but-tracked, known-bad and vendor warning on a temp repo',
   // With a Dockerfile that installs Composer, vendor is deliberate: no warning.
   writeFileSync('Dockerfile', 'RUN composer install\n');
   assert.equal((await detectRepairIssues()).vendorWarning, false);
+});
+
+test('detect: a root .env is reported by its own name, never as "."', async () => {
+  repo();
+  writeFileSync('.env', 'SECRET=1\n');
+  commitAll();
+  const result = await detectRepairIssues();
+  assert.deepEqual(result.knownBad, [{ dir: '.env', count: 1 }]);
+  assert.ok(![...result.ignored, ...result.knownBad].some((f) => f.dir === '.' || f.dir === '..'));
 });
 
 test('detect: throws outside a git repository', async () => {
@@ -170,8 +188,7 @@ test('untrack --apply: index cleaned, files stay, .gitignore updated, rerun is a
   assert.equal(readFileSync('.gitignore', 'utf8'), ignoreAfterFirst);
 });
 
-test('untrack: blocked on main, on a dirty tree, and on detached HEAD', async () => {
-  repo();
+test('untrack: blocked on main, on a dirty tree, and on detached HEAD', async () => {  repo();
   await assert.rejects(() => untrack(['.env'], false), ProtectedBranchError);
 
   featureBranch();
@@ -199,9 +216,66 @@ test('untrack: uploads gets a tracked .gitkeep after --apply', async () => {
   commitAll();
 
   const result = await untrack(['uploads'], true);
-  assert.deepEqual(result.gitkeeps, ['uploads/.gitkeep']);
+  assert.deepEqual(result.gitkeeps, [{ path: 'uploads/.gitkeep', restored: false }]);
   assert.ok(readFileSync(join('uploads', '.gitkeep'), 'utf8') !== undefined);
   assert.ok(lsFiles().includes('uploads/.gitkeep'));
   assert.ok(!lsFiles().includes('uploads/a.txt'));
+});
+
+test('untrack: an already-tracked uploads/.gitkeep stays tracked after --apply', async () => {
+  repo();
+  featureBranch();
+  mkdirAndWrite('uploads', 'a.txt', 'x\n');
+  writeFileSync(join('uploads', '.gitkeep'), '\n');
+  commitAll();
+  assert.ok(lsFiles().includes('uploads/.gitkeep'));
+
+  const result = await untrack(['uploads'], true);
+  assert.deepEqual(result.gitkeeps, [{ path: 'uploads/.gitkeep', restored: true }]);
+  assert.ok(lsFiles().includes('uploads/.gitkeep'));
+  assert.ok(!lsFiles().includes('uploads/a.txt'));
+});
+
+test('untrack: uploads/, ./uploads and .\\uploads all normalize to one uploads/ line', async () => {
+  repo();
+  featureBranch();
+  mkdirAndWrite('uploads', 'a.txt', 'x\n');
+  commitAll();
+
+  const result = await untrack(['uploads/', './uploads', '.\\uploads'], true);
+  assert.deepEqual(result.items, [{ path: 'uploads', files: 1, bytes: 2 }]);
+  assert.deepEqual(result.gitkeeps, [{ path: 'uploads/.gitkeep', restored: false }]);
+  const lines = readFileSync('.gitignore', 'utf8')
+    .split('\n')
+    .filter((line) => line.replace(/\/+$/, '') === 'uploads');
+  assert.equal(lines.length, 1);
+
+  // Re-run must not duplicate the line either (.gitkeep stays tracked by design).
+  commitTracked();
+  const ignoreAfterFirst = readFileSync('.gitignore', 'utf8');
+  const rerun = await untrack(['./uploads', 'uploads/'], true);
+  assert.equal(rerun.gitignoreUpdated, false);
+  assert.equal(readFileSync('.gitignore', 'utf8'), ignoreAfterFirst);
+  assert.equal(
+    readFileSync('.gitignore', 'utf8').split('\n').filter((line) => line.replace(/\/+$/, '') === 'uploads').length,
+    1,
+  );
+});
+
+test('untrack: rejects ., .., absolute and escaping paths without changing anything', async () => {
+  repo();
+  featureBranch();
+  writeFileSync('.env', 'SECRET=1\n');
+  commitAll();
+  const ignoreBefore = readFileSync('.gitignore', 'utf8');
+  const indexBefore = lsFiles().join('\n');
+
+  for (const bad of ['.', '..', './', 'C:\\env', 'C:/env', '/etc', '../env', 'a/../..']) {
+    await assert.rejects(() => untrack([bad], true), InvalidPathError);
+  }
+  // One bad path rejects the whole call: nothing is untracked.
+  await assert.rejects(() => untrack(['.env', '.'], true), InvalidPathError);
+  assert.equal(readFileSync('.gitignore', 'utf8'), ignoreBefore);
+  assert.equal(lsFiles().join('\n'), indexBefore);
 });
 

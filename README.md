@@ -84,17 +84,17 @@ Prints `git status --porcelain=v1 --branch` for the current repository. Fails wi
 
 Read-only scan (works on any branch, dirty tree allowed) that reports two groups of tracked files:
 
-- **Ignored but tracked:** files matching `.gitignore` (`git ls-files -ci --exclude-standard`), grouped by top-level directory.
+- **Ignored but tracked:** files matching `.gitignore` (`git ls-files -ci --exclude-standard`), grouped by top-level directory (root files are listed by their own name, e.g. `.env`).
 - **Known-bad even when not ignored:** `node_modules`, `vendor`, `uploads`, `storage`, `dist`, `build`, `.next`, `__pycache__`, and secrets-like files (`.env`, `.env.*`, `*.pem`, `id_rsa*`; `.env.example` is exempt), grouped the same way.
 
 If `vendor/` is tracked and no `Dockerfile` contains `composer install`, you also get a warning that vendor may be committed on purpose. The report always exits `0`; when anything is found it prints the exact command to fix it.
 
 ### `nad git repair untrack <path...> [--apply]`
 
-Removes paths from the git index (files stay on disk) and adds them to `.gitignore`. All checks run before anything is changed: git repository, not on `main`, attached HEAD, clean working tree.
+Removes paths from the git index (files stay on disk) and adds them to `.gitignore`. Paths are normalized first (backslashes to `/`, leading `./` and trailing `/` stripped) and rejected — before anything is changed — when they are `.`, `..`, absolute, or escape the repository root. Then all checks run: git repository, not on `main`, attached HEAD, clean working tree.
 
 - **Default is a dry run:** prints file count and total size per path, changes nothing, and tells you to re-run with `--apply`.
-- **`--apply`:** `git rm -r --cached` each tracked path, appends the missing lines to `.gitignore` (created if missing, never duplicated — idempotent). For `uploads`/`storage` an empty `.gitkeep` is created and force-added so the directory survives in git. Nothing is committed; run `nad commit "<message>"` next.
+- **`--apply`:** `git rm -r --cached` each tracked path, appends the missing lines to `.gitignore` (created if missing, never duplicated — idempotent). For `uploads`/`storage` a `.gitkeep` is created — or re-added if it exists but is no longer tracked — and force-added so the directory survives in git. Nothing is committed; run `nad commit "<message>"` next.
 - Paths that are not tracked are ignored; if none are tracked the command succeeds with "Nothing to untrack".
 - **Warnings printed after `--apply`:** untracking only affects future commits (files stay in old history, the repo does not shrink, and any secret ever committed must be considered leaked and rotated), and anyone who `git pull`s after you commit will have those files deleted from their working directory — back up `uploads`/`storage` on servers first.
 

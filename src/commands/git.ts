@@ -63,7 +63,8 @@ repair
     }
     if (result.gitignoreUpdated) ui.success('Updated .gitignore.');
     for (const keep of result.gitkeeps) {
-      ui.success(`Created ${ui.code(keep)} so the empty directory survives in git.`);
+      const verb = keep.restored ? 'Restored' : 'Created';
+      ui.success(`${verb} ${ui.code(keep.path)} so the empty directory survives in git.`);
     }
     ui.warn('Untracking only affects future commits: the files stay in old history, the repo does not shrink, and any secret that was ever committed must be considered leaked and rotated.');
     ui.warn('Anyone or any server that runs `git pull` after you commit this will have those files DELETED from its working directory. Back up uploads/storage on servers that update via git pull first.');
