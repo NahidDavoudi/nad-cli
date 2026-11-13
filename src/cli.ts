@@ -34,5 +34,3 @@ try {
 } catch (error) {
   handleError(error);
 }
-
-// hi this is for testing the pr 

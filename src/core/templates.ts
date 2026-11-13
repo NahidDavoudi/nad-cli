@@ -368,7 +368,6 @@ const CI_DOCKER_JOB: string[] = [
   '          images: ghcr.io/${{ github.repository }}',
   '          tags: |',
   '            type=raw,value=latest,enable={{is_default_branch}}',
-  '            type=sha',
   '            type=semver,pattern={{version}}',
   '      - uses: docker/build-push-action@v6',
   '        with:',

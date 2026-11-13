@@ -121,7 +121,9 @@ All checks run **before** anything is changed:
 2. At least one commit exists ahead of `main`.
 3. The GitHub CLI (`gh`) is installed and logged in.
 
-Then it reuses an already-open PR for the branch (idempotent — same URL, nothing re-created), pushes with `-u` **only if** the branch has no upstream yet, and creates the PR with the commit subjects as the body (`- <subject>` per commit). Accepts any title (quotes and special characters are passed as argument arrays, never through a shell).
+Then it reuses an already-open PR for the branch (idempotent — same URL, nothing re-created), pushes with `-u` **only if** the branch has no upstream yet, and creates the PR with the commit subjects as the body (`- <subject>` per commit; compared against `origin/main` after a fetch, so a stale local `main` cannot list wrong commits). Accepts any title (quotes and special characters are passed as argument arrays, never through a shell).
+
+By default the PR is only opened. With `--merge` it also waits for CI checks (`gh pr checks --watch --fail-fast`), squash-merges, deletes the branch and syncs local `main`. If CI never reports any checks within the retry window, it stops with an error instead of merging untested code.
 
 If the push fails you get the raw `git push` stderr, including permission errors.
 
