@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
+import { DataMount } from './config.js';
 import { PROJECT_TYPES, type ProjectType } from './detect.js';
 import { renderTemplate } from './templates.js';
 
@@ -34,6 +35,48 @@ test('no generated compose file publishes ports', () => {
     const compose = renderTemplate(context(type))['docker-compose.yml'] ?? '';
     assert.ok(!/(^|\s)ports:/.test(compose), `${type} compose must not contain "ports:"`);
   }
+});
+
+test('php compose mounts config data under ./data and keeps .env:ro', () => {
+  const compose = renderTemplate(context('php'))['docker-compose.yml'] ?? '';
+  assert.match(compose, /- \.\/data\/uploads:\/var\/www\/html\/uploads\n/);
+  assert.match(compose, /- \.\/data\/logs:\/var\/www\/html\/storage\/logs\n/);
+  assert.match(compose, /- \.\/\.env:\/var\/www\/html\/\.env:ro\n/);
+  assert.doesNotMatch(compose, /- \.\/uploads:/);
+  assert.doesNotMatch(compose, /- \.\/storage\/logs:/);
+});
+
+test('php compose: config-provided data overrides the defaults', () => {
+  const data: DataMount[] = [{ host: 'media', container: '/srv/media' }];
+  const compose = renderTemplate({ ...context('php'), data })['docker-compose.yml'] ?? '';
+  assert.match(compose, /- \.\/data\/media:\/srv\/media\n/);
+  assert.doesNotMatch(compose, /\/data\/uploads/);
+});
+
+test('php compose: public dir also mounts ./data/uploads at public/uploads', () => {
+  const compose = renderTemplate({
+    ...context('php'),
+    facts: { ...context('php').facts, phpPublicDir: true },
+  })['docker-compose.yml'] ?? '';
+  assert.match(compose, /- \.\/data\/uploads:\/var\/www\/html\/public\/uploads\n/);
+});
+
+test('php dockerignore excludes data/, node keeps its existing data line', () => {
+  const ignore = (type: ProjectType) => (renderTemplate(context(type))['.dockerignore'] ?? '').split('\n');
+  assert.ok(ignore('php').includes('data'));
+  assert.ok(ignore('node').includes('data'));
+});
+
+test('php project yml: server/domain placeholders, port and data defaults; other types have no data', () => {
+  const php = renderTemplate(context('php'))['nad.project.yml'] ?? '';
+  assert.match(php, /^# server: vps$/m);
+  assert.match(php, /^# domain: example\.com$/m);
+  assert.match(php, /^port: 80$/m);
+  assert.match(php, /data:\n {2}- host: uploads\n {4}container: \/var\/www\/html\/uploads\n {2}- host: logs\n {4}container: \/var\/www\/html\/storage\/logs\n/m);
+
+  const node = renderTemplate(context('node'))['nad.project.yml'] ?? '';
+  assert.doesNotMatch(node, /^data:/m);
+  assert.match(node, /^port: 3000$/m);
 });
 
 test('compose joins the external "proxy" network, php also "db_net"', () => {
