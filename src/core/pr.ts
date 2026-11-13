@@ -3,7 +3,7 @@ import {
   DirtyTreeError,
   NotAGitRepoError,
   NoCommitsToPrError,
-  ProtectedBranchError
+  ProtectedBranchError,
 } from './errors.js';
 import { currentBranch, git, isClean, isGitRepo } from './git.js';
 import {
@@ -29,7 +29,7 @@ export interface PrOptions {
 
 export async function createPullRequest(
   title: string,
-  options: PrOptions = { merge: true },
+  options: PrOptions = { merge: false },
   gh = {
     findOpenPr: (branch: string) => findOpenPr(branch),
     createPr: (...args: [string, string, string, string]) => createPr(...args),
@@ -44,7 +44,13 @@ export async function createPullRequest(
   if (branch === '') throw new DetachedHeadError();
   if (branch === PROTECTED_BASE) throw new ProtectedBranchError();
   if (!(await isClean())) throw new DirtyTreeError();
-  const commitMessages = (await git(['log', '--format=%s', `${PROTECTED_BASE}..HEAD`]))
+  // Compare against origin/main so a stale local main doesn't list wrong commits.
+  // No remote / offline: fall back to the local ref.
+  await git(['fetch', 'origin', PROTECTED_BASE]).catch(() => undefined);
+  const base = await git(['rev-parse', '--quiet', '--verify', `origin/${PROTECTED_BASE}`])
+    .then(() => `origin/${PROTECTED_BASE}`)
+    .catch(() => PROTECTED_BASE);
+  const commitMessages = (await git(['log', '--format=%s', `${base}..HEAD`]))
     .split('\n')
     .filter(Boolean);
   if (commitMessages.length === 0) throw new NoCommitsToPrError();

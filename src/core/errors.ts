@@ -54,8 +54,20 @@ export class NoCommitsToPrError extends NadError {
 }
 
 export class ChecksFailedError extends NadError {
-  constructor() {
-    super('CI checks failed.', 'Run `gh pr checks` for details, fix, commit, then run `nad pr` again.');
+  constructor(reason?: string) {
+    super(
+      reason ? `CI checks failed.\n${reason}` : 'CI checks failed.',
+      'Run `gh pr checks` for details, fix, commit, then run `nad pr --merge` again.',
+    );
+  }
+}
+
+export class ChecksNotReportedError extends NadError {
+  constructor(branch: string) {
+    super(
+      `No CI checks were reported for ${branch}.`,
+      'CI may still be starting; try again shortly. If this repo has no CI, merge with: gh pr merge ' + branch + ' --squash',
+    );
   }
 }
 

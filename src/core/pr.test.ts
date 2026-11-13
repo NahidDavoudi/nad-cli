@@ -146,6 +146,15 @@ test('flow: --no-merge skips checks and merge', async () => {
   assert.equal(git(['branch', '--show-current']), 'feature/x');
 });
 
+test('flow: default opens the PR only, no merge', async () => {
+  repoWithRemote();
+  const calls: string[] = [];
+  const url = await createPullRequest('t', undefined, fakeDeps(calls, URL));
+  assert.equal(url, URL);
+  assert.deepEqual(calls, ['findOpenPr:feature/x']);
+  assert.equal(git(['branch', '--show-current']), 'feature/x');
+});
+
 test('flow: no open PR → createPr is used', async () => {
   repoWithRemote();
   const calls: string[] = [];

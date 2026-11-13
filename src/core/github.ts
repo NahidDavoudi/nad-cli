@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { ChecksFailedError, GhNotAuthenticatedError, GhNotFoundError, NadError } from './errors.js';
+import { ChecksFailedError, ChecksNotReportedError, GhNotAuthenticatedError, GhNotFoundError, NadError } from './errors.js';
 
 export async function gh(args: string[]): Promise<string> {
   try {
@@ -49,11 +49,10 @@ export async function createPr(
   base: string,
   run: (args: string[]) => Promise<string> = gh,
 ): Promise<string> {
-  await run(['pr', 'create', '--head', branch, '--title', title, '--body', body, '--base', base]);
-  // gh prints the new PR URL on stdout; take the first https link.
-  // gh pr create fails on anything ambiguous, so read the URL back to stay simple.
-  const url = await findOpenPr(branch, run);
-  if (!url) throw new NadError('PR was created but its URL could not be found.', 'Check `gh pr list`.');
+  const stdout = await run(['pr', 'create', '--head', branch, '--title', title, '--body', body, '--base', base]);
+  // gh pr create fails on anything ambiguous; its stdout contains the PR URL.
+  const url = stdout.match(/https:\S+/)?.[0];
+  if (!url) throw new NadError('PR was created but its URL could not be read.', 'Check `gh pr list`.');
   return url;
 }
 
@@ -75,13 +74,14 @@ export async function waitForChecks(
       const text = `${err.message ?? ''}${err.stderr ?? ''}${err.stdout ?? ''}`;
       if (/no checks reported/i.test(text)) {
         // Right after PR creation, CI may not have registered yet: retry briefly.
-        // If it is still empty after the retries, the repo has no CI: continue.
+        // Still empty after the retries: do not merge untested code.
         if (i < attempts - 1) await sleep(delay);
         continue;
       }
-      throw new ChecksFailedError();
+      throw new ChecksFailedError([err.message, err.stderr].filter(Boolean).join('\n').trim() || undefined);
     }
   }
+  throw new ChecksNotReportedError(branch);
 }
 
 export async function mergePr(

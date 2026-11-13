@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { ChecksFailedError, GhNotFoundError, NadError } from './errors.js';
+import { ChecksFailedError, ChecksNotReportedError, GhNotFoundError, NadError } from './errors.js';
 import { createPr, mergePr, waitForChecks } from './github.js';
 
 function failing(stderr: string): () => never {
@@ -23,23 +23,28 @@ test('waitForChecks: retries briefly when checks are not registered yet', async 
   assert.equal(calls, 2);
 });
 
-test('waitForChecks: repo with no CI resolves after all retries', async () => {
+test('waitForChecks: no checks after all retries throws ChecksNotReportedError', async () => {
   let calls = 0;
-  await waitForChecks(
-    'feature/x',
-    async () => {
-      calls++;
-      failing('no checks reported')();
-    },
-    0,
+  await assert.rejects(
+    () =>
+      waitForChecks(
+        'feature/x',
+        async () => {
+          calls++;
+          failing('no checks reported')();
+        },
+        0,
+      ),
+    ChecksNotReportedError,
   );
   assert.equal(calls, 3);
 });
 
-test('waitForChecks: failed checks throw ChecksFailedError', async () => {
+test('waitForChecks: failed checks throw ChecksFailedError with the reason', async () => {
   await assert.rejects(
     () => waitForChecks('feature/x', failing('2 of 3 checks failed'), 0),
-    ChecksFailedError,
+    (error: unknown) =>
+      error instanceof ChecksFailedError && /2 of 3 checks failed/.test(error.message),
   );
 });
 
@@ -50,21 +55,21 @@ test('waitForChecks: missing gh rethrows GhNotFoundError', async () => {
   );
 });
 
-test('createPr: throws when the URL cannot be read back', async () => {
+test('createPr: throws when the URL cannot be read from stdout', async () => {
   await assert.rejects(
-    () => createPr('feature/x', 'title', 'body', 'main', async () => '[]'),
+    () => createPr('feature/x', 'title', 'body', 'main', async () => 'no url here'),
     (error: unknown) =>
-      error instanceof NadError && /URL could not be found/.test(error.message),
+      error instanceof NadError && /URL could not be read/.test(error.message),
   );
 });
 
-test('createPr: returns the URL of the newly opened PR', async () => {
+test('createPr: returns the URL from stdout', async () => {
   const url = await createPr(
     'feature/x',
     'title',
     'body',
     'main',
-    async () => '[{"url":"https://example.com/pr/1"}]',
+    async () => 'Creating pull request...\nhttps://example.com/pr/1',
   );
   assert.equal(url, 'https://example.com/pr/1');
 });
