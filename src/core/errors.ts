@@ -74,6 +74,12 @@ export class InvalidPathError extends NadError {
   }
 }
 
+export class ConfigError extends NadError {
+  constructor(message: string) {
+    super(`nad.project.yml: ${message}`, 'Fix nad.project.yml, or delete it and re-run nad init.');
+  }
+}
+
 export class ChecksNotReportedError extends NadError {
   constructor(branch: string) {
     super(

@@ -1,4 +1,6 @@
+import type { DataMount } from './config.js';
 import type { Detection, ProjectType } from './detect.js';
+import { PHP_DEFAULT_DATA } from './config.js';
 
 export interface TemplateContext {
   name: string;
@@ -6,6 +8,8 @@ export interface TemplateContext {
   /** `owner/repo` (lowercase) used for the GHCR image name. */
   imageRepo: string;
   facts: Detection['facts'];
+  /** PHP data mounts (host name -> container path); defaults apply for php when omitted. */
+  data?: DataMount[];
   /** Which file groups to generate. Defaults to docker only (command always passes it). */
   parts?: Parts;
   /** ci.yml adds the image build+push job when a Dockerfile is generated or already exists. */
@@ -179,12 +183,12 @@ function compose(c: TemplateContext): string {
   const needsDb = c.type === 'php';
   const networks = needsDb ? ['proxy', 'db_net'] : ['proxy'];
 
+  const data = c.data ?? (c.type === 'php' ? PHP_DEFAULT_DATA : []);
   const volumes: Record<ProjectType, string[]> = {
     php: [
-      './uploads:/var/www/html/uploads',
-      ...(c.facts.phpPublicDir ? ['./uploads:/var/www/html/public/uploads'] : []),
+      ...data.map((mount) => `./data/${mount.host}:${mount.container}`),
       './.env:/var/www/html/.env:ro',
-      './storage/logs:/var/www/html/storage/logs',
+      ...(c.facts.phpPublicDir ? ['./data/uploads:/var/www/html/public/uploads'] : []),
     ],
     node: ['data:/app/data'],
     next: [],
@@ -234,8 +238,8 @@ const COMMON_IGNORE = [
 ];
 
 const EXTRA_IGNORE: Record<ProjectType, string[]> = {
-  // uploads and logs are mounted at runtime, never baked into the image
-  php: ['vendor', 'uploads', 'storage/logs', 'storage/cache'],
+  // data/ holds runtime uploads+logs mounted by compose; never baked into the image
+  php: ['vendor', 'uploads', 'storage/logs', 'storage/cache', 'data'],
   next: ['node_modules', '.next', 'out'],
   node: ['node_modules', 'dist', 'data'],
   python: ['__pycache__', '*.pyc', '.venv', 'venv'],
@@ -291,11 +295,18 @@ function envExample(c: TemplateContext): string | null {
 }
 
 function projectYml(c: TemplateContext): string {
+  const data = c.type === 'php' ? (c.data ?? PHP_DEFAULT_DATA) : undefined;
   return lines(
     'schemaVersion: 1',
     `name: ${slug(c.name)}`,
     `type: ${c.type}`,
     'baseBranch: main',
+    '# server: vps',
+    '# domain: example.com',
+    `port: ${CONTAINER_PORT[c.type]}`,
+    ...(data
+      ? ['data:', ...data.map((mount) => `  - host: ${mount.host}\n    container: ${mount.container}`)]
+      : []),
     'docker:',
     `  container: ${slug(c.name)}`,
     `  port: ${CONTAINER_PORT[c.type]}`,
